@@ -21,6 +21,14 @@ const el = {
   statusLine: document.getElementById("statusLine"),
   serverDot: document.getElementById("serverDot"),
   serverStatusText: document.getElementById("serverStatusText"),
+  feedbackToggleBtn: document.getElementById("feedbackToggleBtn"),
+  feedbackSection: document.getElementById("feedbackSection"),
+  feedbackCategory: document.getElementById("feedbackCategory"),
+  feedbackMessage: document.getElementById("feedbackMessage"),
+  ratingRow: document.getElementById("ratingRow"),
+  clearRatingBtn: document.getElementById("clearRatingBtn"),
+  submitFeedbackBtn: document.getElementById("submitFeedbackBtn"),
+  feedbackStatusLine: document.getElementById("feedbackStatusLine"),
 };
 
 function setStatus(text, kind) {
@@ -139,3 +147,81 @@ el.executeBtn.addEventListener("click", () => {
 });
 
 checkServer();
+
+// ---------------------------------------------------------------------
+// Feedback - goes to the AIVA Work Manager feedback inbox, the same
+// endpoint the AIVA Browser reports into (see background.js for the
+// actual URL). Not scanned/redacted like page content - the user is
+// typing this themselves, about the extension, not pulling it off a page.
+// ---------------------------------------------------------------------
+
+let selectedRating = null;
+
+el.feedbackToggleBtn.addEventListener("click", () => {
+  el.feedbackSection.classList.toggle("hidden");
+});
+
+el.ratingRow.querySelectorAll(".star-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    selectedRating = Number(btn.dataset.rating);
+    renderStars();
+  });
+});
+
+el.clearRatingBtn.addEventListener("click", () => {
+  selectedRating = null;
+  renderStars();
+});
+
+function renderStars() {
+  el.ratingRow.querySelectorAll(".star-btn").forEach((btn) => {
+    btn.classList.toggle("active", selectedRating !== null && Number(btn.dataset.rating) <= selectedRating);
+  });
+}
+
+function setFeedbackStatus(text, kind) {
+  el.feedbackStatusLine.textContent = text || "";
+  el.feedbackStatusLine.className = "status-line" + (kind ? " " + kind : "");
+}
+
+el.submitFeedbackBtn.addEventListener("click", () => {
+  const message = el.feedbackMessage.value.trim();
+  if (!message) {
+    setFeedbackStatus("Write a message before sending.", "error");
+    return;
+  }
+
+  el.submitFeedbackBtn.disabled = true;
+  setFeedbackStatus("Sending…");
+
+  getActiveTab((tab) => {
+    let pageDomain = null;
+    try {
+      pageDomain = tab && tab.url ? new URL(tab.url).hostname : null;
+    } catch (e) {
+      /* tab.url can be a non-http scheme (chrome://, about:blank, ...) */
+    }
+
+    const payload = {
+      message,
+      category: el.feedbackCategory.value,
+      rating: selectedRating,
+      source: "aiva-nex-agent",
+      pageUrl: pageDomain, // domain only, consistent with the rest of the extension - never the full URL
+      appVersion: chrome.runtime.getManifest().version,
+      platform: navigator.userAgent.slice(0, 80),
+    };
+
+    chrome.runtime.sendMessage({ type: "SEND_FEEDBACK", payload }, (res) => {
+      el.submitFeedbackBtn.disabled = false;
+      if (chrome.runtime.lastError || !res || !res.ok) {
+        setFeedbackStatus((res && res.error) || "Could not send feedback. Check your connection.", "error");
+        return;
+      }
+      setFeedbackStatus("Thanks! Feedback sent.", "ok");
+      el.feedbackMessage.value = "";
+      selectedRating = null;
+      renderStars();
+    });
+  });
+});

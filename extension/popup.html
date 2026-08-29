@@ -42,6 +42,29 @@
     </section>
 
     <div class="status-line" id="statusLine"></div>
+
+    <button id="feedbackToggleBtn" class="feedback-toggle" type="button">💬 Send feedback</button>
+    <section class="feedback-section hidden" id="feedbackSection">
+      <div class="section-label">Send feedback</div>
+      <select id="feedbackCategory">
+        <option value="bug">Bug report</option>
+        <option value="idea">Feature idea</option>
+        <option value="praise">Praise</option>
+        <option value="other" selected>Other</option>
+      </select>
+      <textarea id="feedbackMessage" placeholder="What happened, or what would you like to see?" maxlength="4000"></textarea>
+      <div class="rating-row" id="ratingRow">
+        <span>Rating (optional):</span>
+        <button type="button" class="star-btn" data-rating="1">★</button>
+        <button type="button" class="star-btn" data-rating="2">★</button>
+        <button type="button" class="star-btn" data-rating="3">★</button>
+        <button type="button" class="star-btn" data-rating="4">★</button>
+        <button type="button" class="star-btn" data-rating="5">★</button>
+        <button type="button" id="clearRatingBtn" class="clear-rating-btn" title="Clear rating">✕</button>
+      </div>
+      <button id="submitFeedbackBtn" class="btn btn-secondary">Submit Feedback</button>
+      <div class="status-line" id="feedbackStatusLine"></div>
+    </section>
   </main>
 
   <footer class="footer">No raw PII ever leaves your browser. Only sanitized context is sent.</footer>

@@ -42,6 +42,7 @@ screenshots-worth of detail in [Setup](#setup) below.
 | Action commands: click / focus / scroll / summarize | `server/main.py` → `decide_action_rules()`, `call_local_llm()`; executed in `extension/content.js` → `executeAction()` |
 | Demo page: scholarship/job form with all required fields | `demo/demo-form.html` |
 | **Beyond the brief:** a real local LLM decides actions when one is running (Ollama/LM Studio/etc.), with an automatic rule-based fallback so the demo can't break | `server/main.py` → `decide_action()` (see [Using a local model](#using-a-local-model)) |
+| **Beyond the brief:** in-popup feedback, routed to a real feedback inbox | `extension/popup.html/js` → feedback section; `extension/background.js` → `SEND_FEEDBACK` |
 
 ---
 

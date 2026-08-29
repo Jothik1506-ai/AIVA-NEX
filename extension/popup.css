@@ -200,3 +200,79 @@ body {
 .hidden {
   display: none !important;
 }
+
+.feedback-toggle {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+}
+
+.feedback-toggle:hover {
+  color: #d1d5db;
+}
+
+.feedback-section {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.feedback-section select,
+.feedback-section textarea {
+  width: 100%;
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  color: #e5e7eb;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 7px 9px;
+}
+
+.feedback-section textarea {
+  min-height: 60px;
+  resize: vertical;
+}
+
+.rating-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.star-btn {
+  background: none;
+  border: none;
+  color: #4b5563;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 1px;
+  line-height: 1;
+}
+
+.star-btn.active {
+  color: #facc15;
+}
+
+.clear-rating-btn {
+  background: none;
+  border: none;
+  color: #4b5563;
+  font-size: 11px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+.clear-rating-btn:hover {
+  color: #9ca3af;
+}
