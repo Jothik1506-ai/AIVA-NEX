@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Aiva Nex Agent</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="title">
+      <span class="lock">🔒</span>
+      <span>Aiva Nex Agent</span>
+    </div>
+    <div class="server-status" id="serverStatus">
+      <span class="dot" id="serverDot"></span>
+      <span id="serverStatusText">checking server…</span>
+    </div>
+  </header>
+
+  <main class="content">
+    <button id="scanBtn" class="btn btn-primary">Scan Page</button>
+
+    <section class="summary hidden" id="summarySection">
+      <div class="summary-row">
+        <span>Sensitive items detected</span>
+        <strong id="sensitiveCount">0</strong>
+      </div>
+      <div id="detectedTypesList" class="chip-row"></div>
+    </section>
+
+    <section class="json-section hidden" id="jsonSection">
+      <div class="section-label">Sanitized screen graph (what would be sent)</div>
+      <pre id="jsonPreview" class="json-preview"></pre>
+    </section>
+
+    <button id="sendBtn" class="btn btn-secondary hidden">Send to Server (Sanitized Only)</button>
+
+    <section class="action-section hidden" id="actionSection">
+      <div class="section-label">Action returned by server</div>
+      <div class="action-box" id="actionBox"></div>
+      <button id="executeBtn" class="btn btn-primary">Execute Action</button>
+    </section>
+
+    <div class="status-line" id="statusLine"></div>
+  </main>
+
+  <footer class="footer">No raw PII ever leaves your browser. Only sanitized context is sent.</footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

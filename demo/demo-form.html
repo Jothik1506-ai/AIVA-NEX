@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>National Scholarship &amp; Job Portal - Application Form</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #eef2f7;
+    color: #1f2937;
+  }
+  nav {
+    background: #1e3a8a;
+    color: #fff;
+    padding: 14px 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  nav a { color: #dbeafe; text-decoration: none; margin-left: 18px; font-size: 13px; }
+  .wrap { max-width: 640px; margin: 32px auto; padding: 0 16px; }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+    padding: 28px 32px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: #6b7280; font-size: 13px; margin-bottom: 22px; }
+  .field { margin-bottom: 16px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+  input, textarea, select {
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid #d1d5db;
+    border-radius: 7px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 60px; }
+  .hint { font-size: 11px; color: #9ca3af; margin-top: 3px; }
+  .actions { display: flex; gap: 10px; margin-top: 22px; }
+  button {
+    padding: 10px 18px;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #uploadBtn { background: #e5e7eb; color: #1f2937; }
+  #submitBtn { background: #16a34a; color: #fff; }
+  footer { text-align: center; font-size: 11px; color: #9ca3af; margin-top: 18px; }
+  footer a { color: #6b7280; }
+</style>
+</head>
+<body>
+
+<nav>
+  <strong>National Scholarship &amp; Job Portal</strong>
+  <span>
+    <a href="#home">Home</a>
+    <a href="#terms">Terms &amp; Conditions</a>
+  </span>
+</nav>
+
+<div class="wrap">
+  <div class="card">
+    <h1>Scholarship / Job Application</h1>
+    <div class="subtitle">Fill in your details below. Fields marked * are required.</div>
+
+    <form id="applicationForm">
+      <!-- A CSRF-style hidden field, to demonstrate hidden-input detection -->
+      <input type="hidden" name="csrf_token" value="a1b2c3d4e5f6g7h8" />
+
+      <div class="field">
+        <label for="fullName">Full Name *</label>
+        <input type="text" id="fullName" name="fullName" placeholder="e.g. Priya Sharma" required />
+      </div>
+
+      <div class="field">
+        <label for="email">Email Address *</label>
+        <input type="email" id="email" name="email" placeholder="e.g. priya@example.com" required />
+      </div>
+
+      <div class="field">
+        <label for="phone">Phone Number *</label>
+        <input type="tel" id="phone" name="phone" placeholder="e.g. 9876543210" required />
+      </div>
+
+      <div class="field">
+        <label for="aadhaar">Aadhaar Number *</label>
+        <input type="text" id="aadhaar" name="aadhaar" placeholder="12-digit Aadhaar number" maxlength="14" required />
+      </div>
+
+      <div class="field">
+        <label for="pan">PAN Number *</label>
+        <input type="text" id="pan" name="pan" placeholder="e.g. ABCDE1234F" maxlength="10" required />
+      </div>
+
+      <div class="field">
+        <label for="password">Create Password *</label>
+        <input type="password" id="password" name="password" placeholder="Choose a password" required />
+      </div>
+
+      <div class="field">
+        <label for="otp">OTP Verification *</label>
+        <input type="text" id="otp" name="otp" placeholder="6-digit OTP" maxlength="6" required />
+        <div class="hint">Sent to your registered mobile number.</div>
+      </div>
+
+      <div class="field">
+        <label for="address">Residential Address *</label>
+        <textarea id="address" name="address" placeholder="House no, street, city, state, PIN code" required></textarea>
+      </div>
+
+      <div class="field">
+        <label for="comments">Additional Comments (optional)</label>
+        <!-- Pre-filled with free text containing embedded PII, to demo the
+             regex fallback detector on unlabeled/free-text content. -->
+        <textarea id="comments" name="comments">You can also reach me at priya.demo@example.com or 9876501234 if there are any issues with my application.</textarea>
+      </div>
+
+      <div class="actions">
+        <input type="file" id="certificateFile" style="display:none" />
+        <button type="button" id="uploadBtn" onclick="document.getElementById('certificateFile').click()">
+          Upload Certificate
+        </button>
+        <button type="submit" id="submitBtn">Submit Application</button>
+      </div>
+    </form>
+  </div>
+
+  <footer>
+    This is a local demo page for the Aiva Nex Agent prototype. No data on this page is ever submitted anywhere.
+  </footer>
+</div>
+
+<script>
+  document.getElementById("applicationForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    alert("Demo form - nothing is actually submitted.");
+  });
+</script>
+
+</body>
+</html>
