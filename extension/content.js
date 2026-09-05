@@ -510,35 +510,49 @@
       case "AUTOFILL_FORM": {
         const data = action.profileData || {};
         let filledCount = 0;
+        const filledLabels = [];
 
-        // Make sure checkout form is visible if on demo page
-        const checkoutForm = document.getElementById("checkoutForm");
-        if (checkoutForm && checkoutForm.classList.contains("hidden")) {
-          checkoutForm.classList.remove("hidden");
-        }
+        // Only fill a form the user can actually see and is actively on -
+        // never reveal/un-hide a form the page itself has hidden. Filling a
+        // form the user hasn't navigated to is filling the wrong context.
+        const isVisible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
 
-        const inputs = Array.from(document.querySelectorAll("input:not([type='hidden']), textarea, select"));
+        const candidateForms = Array.from(document.querySelectorAll("form")).filter(isVisible);
+        // No visible form -> nothing to (safely) fill. Fall back to visible,
+        // non-hidden inputs outside any <form> only if that's genuinely all
+        // there is, rather than silently reaching into hidden containers.
+        const scopeEls = candidateForms.length
+          ? candidateForms.flatMap((f) => Array.from(f.querySelectorAll("input:not([type='hidden']), textarea, select")))
+          : Array.from(document.querySelectorAll("input:not([type='hidden']), textarea, select"));
+
+        const inputs = scopeEls.filter(isVisible);
+
         inputs.forEach((el) => {
           const hint = getFieldHint(el).toLowerCase();
           const name = (el.name || "").toLowerCase();
           const id = (el.id || "").toLowerCase();
           const fullHint = `${hint} ${name} ${id}`;
 
+          // Only ever use a value the user actually saved locally - never
+          // invent sample/fallback identity data. No saved value -> skip the
+          // field entirely so the user is asked for it instead of a fake
+          // value silently landing in the form.
           let val = null;
+          let label = null;
           if (/name/i.test(fullHint) && !/user\s*name/i.test(fullHint)) {
-            val = data.name || "Priya Sharma";
+            val = data.name; label = "name";
           } else if (/e[\s-]?mail/i.test(fullHint)) {
-            val = data.email || "priya.sharma@example.com";
+            val = data.email; label = "email";
           } else if (/phone|mobile|contact/i.test(fullHint)) {
-            val = data.phone || "9876543210";
+            val = data.phone; label = "phone";
           } else if (/address|location/i.test(fullHint)) {
-            val = data.address || "102 MG Road, Indiranagar, Bengaluru, Karnataka";
+            val = data.address; label = "address";
           } else if (/pin\s*code|zip/i.test(fullHint)) {
-            val = data.pincode || "560038";
+            val = data.pincode; label = "pincode";
           } else if (/aadhaar|aadhar/i.test(fullHint)) {
-            val = data.aadhaar || "9876 5432 1098";
+            val = data.aadhaar; label = "aadhaar";
           } else if (/\bpan\b/i.test(fullHint)) {
-            val = data.pan || "ABCDE1234F";
+            val = data.pan; label = "pan";
           }
 
           if (val && !el.value) {
@@ -548,31 +562,63 @@
             el.style.border = "2px solid #16a34a";
             el.style.backgroundColor = "#f0fdf4";
             filledCount++;
+            filledLabels.push(label);
           }
         });
 
         const firstFilled = inputs.find((i) => i.value);
         if (firstFilled) firstFilled.scrollIntoView({ behavior: "smooth", block: "center" });
 
+        if (filledCount === 0) {
+          return {
+            ok: false,
+            error: "Nothing to autofill - no saved profile values matched a visible field on this page.",
+          };
+        }
+
         return {
           ok: true,
-          message: `Autofilled ${filledCount} field(s) on-device from your local storage profile.`,
+          message: `Autofilled ${filledCount} field(s) on-device from your local storage profile: ${filledLabels.join(", ")}.`,
         };
       }
       case "place_order":
       case "PLACE_ORDER": {
-        const orderBtn =
-          document.getElementById("placeOrderBtn") ||
-          document.querySelector("button[type='submit']") ||
-          Array.from(document.querySelectorAll("button")).find((b) => /place order|confirm order|buy/i.test(b.textContent));
+        // Only click a button we can specifically identify as this page's
+        // own order button, and only if it's visible - no generic
+        // "any submit button on the page" or whole-document text search,
+        // which could just as easily hit an unrelated form's submit button.
+        const orderBtn = document.getElementById("placeOrderBtn");
+        const isVisible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
 
-        if (orderBtn) {
-          orderBtn.scrollIntoView({ behavior: "smooth", block: "center" });
-          orderBtn.click();
-          showSummaryBanner("🎉 Order placed successfully! Thank you for using Aiva Nex Agent.");
-          return { ok: true, message: "Order placed successfully on page." };
+        if (!orderBtn || !isVisible(orderBtn)) {
+          return { ok: false, error: "No recognized, visible order button found on this page." };
         }
-        return { ok: false, error: "Place Order button not found on page." };
+
+        // Validate before clicking - don't submit a form that isn't
+        // actually complete, and surface the browser's own validation UI
+        // instead of clicking through it.
+        if (orderBtn.form && !orderBtn.form.checkValidity()) {
+          orderBtn.form.reportValidity();
+          return { ok: false, error: "Order form is incomplete - required fields are missing." };
+        }
+
+        orderBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+        orderBtn.click();
+
+        // Verify the outcome instead of assuming it: the demo page reveals
+        // #orderSuccess only on a real successful submit. Give the page a
+        // moment to run its own submit handler before checking.
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            const successEl = document.getElementById("orderSuccess");
+            if (successEl && isVisible(successEl)) {
+              showSummaryBanner("🎉 Order placed successfully! Thank you for using Aiva Nex Agent.");
+              resolve({ ok: true, message: "Order placed successfully on page." });
+            } else {
+              resolve({ ok: false, error: "Clicked the order button, but the page did not confirm success." });
+            }
+          }, 150);
+        });
       }
       case "search_on_page":
       case "SEARCH_ON_PAGE": {
@@ -605,7 +651,16 @@
       return true;
     }
     if (msg.type === "EXECUTE_ACTION") {
-      sendResponse(executeAction(msg.action));
+      // executeAction() can return either a plain result object or a Promise
+      // (place_order verifies the page's own success state before replying,
+      // which takes a moment) - handle both so the async case actually
+      // reaches sendResponse instead of serializing an unresolved Promise.
+      const result = executeAction(msg.action);
+      if (result && typeof result.then === "function") {
+        result.then(sendResponse);
+      } else {
+        sendResponse(result);
+      }
       return true;
     }
     return false;

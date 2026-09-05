@@ -6,14 +6,16 @@ let lastGraph = null;
 let lastAction = null;
 let flowStep = "scan"; // "scan" -> "send" -> "done"
 let chatHistory = [];
+// No default/sample identity - a privacy-first agent must not start out
+// holding (and offering to autofill with) values the user never entered.
 let localProfile = {
-  name: "Priya Sharma",
-  email: "priya.sharma@example.com",
-  phone: "9876543210",
-  address: "102 MG Road, Indiranagar, Bengaluru, Karnataka",
-  pincode: "560038",
-  aadhaar: "9876 5432 1098",
-  pan: "ABCDE1234F",
+  name: "",
+  email: "",
+  phone: "",
+  address: "",
+  pincode: "",
+  aadhaar: "",
+  pan: "",
 };
 
 const el = {
@@ -86,17 +88,36 @@ function getActiveTab(callback) {
   });
 }
 
+// A confirmation card (autofill/order) is shown for a specific tab, but the
+// user can switch tabs before clicking Confirm - the side panel stays open
+// across tab switches, unlike a popup. Without this, confirming on tab A
+// while tab B is now active would silently execute on tab B instead.
+// This doesn't do full document-identity/navigation tracking - just the
+// minimum needed so a confirm click can't be redirected to a different tab.
+function withVerifiedTab(boundTabId, callback) {
+  if (boundTabId == null) {
+    addCard("⚠️ Lost track of which tab this was for - please re-scan and try again.", "chat-msg-agent");
+    return;
+  }
+  chrome.tabs.get(boundTabId, (tab) => {
+    if (chrome.runtime.lastError || !tab) {
+      addCard("⚠️ That tab is no longer open - please re-scan and try again.", "chat-msg-agent");
+      return;
+    }
+    callback(boundTabId);
+  });
+}
+
 // ---------------------------------------------------------------------
 // Local PII Profile Storage (On-Device chrome.storage.local)
 // ---------------------------------------------------------------------
 function loadLocalProfile() {
   if (chrome.storage && chrome.storage.local) {
     chrome.storage.local.get(["userProfile"], (res) => {
+      // Nothing to write on first run - an empty profile stays empty until
+      // the user explicitly saves something. Never seed storage ourselves.
       if (res && res.userProfile) {
         localProfile = { ...localProfile, ...res.userProfile };
-      } else {
-        // Initialize default local profile if empty
-        chrome.storage.local.set({ userProfile: localProfile });
       }
       populateProfileInputs();
     });
@@ -289,7 +310,7 @@ function handleSendChat(queryText) {
   addCard(escapeHtml(query), "chat-msg-user");
   setStatus("Aiva Nex Agent thinking…");
 
-  const sendQueryWithGraph = (graph) => {
+  const sendQueryWithGraph = (graph, boundTabId) => {
     const model = el.modelSelect.value;
     chrome.runtime.sendMessage(
       {
@@ -310,20 +331,26 @@ function handleSendChat(queryText) {
         chatHistory.push({ role: "user", content: query });
         chatHistory.push({ role: "assistant", content: data.reply });
 
-        renderChatAgentResponse(data);
+        renderChatAgentResponse(data, boundTabId);
         setStatus("Ready", "ok");
       }
     );
   };
 
-  if (lastGraph) {
-    sendQueryWithGraph(lastGraph);
-  } else {
-    runScan((graph) => sendQueryWithGraph(graph));
-  }
+  // Capture which tab this question was actually about right now - any
+  // confirmation card the reply produces must execute against this same
+  // tab, not whatever tab happens to be active when the user later clicks
+  // Confirm.
+  getActiveTab((tab) => {
+    if (lastGraph) {
+      sendQueryWithGraph(lastGraph, tab.id);
+    } else {
+      runScan((graph) => sendQueryWithGraph(graph, tab.id));
+    }
+  });
 }
 
-function renderChatAgentResponse(data) {
+function renderChatAgentResponse(data, boundTabId) {
   let cardHtml = `<div>${escapeHtml(data.reply)}</div>`;
 
   if (data.summary) {
@@ -335,11 +362,11 @@ function renderChatAgentResponse(data) {
     if (data.url) {
       chrome.runtime.sendMessage({ type: "NAVIGATE_TAB", url: data.url });
     }
-    // Also execute search/scroll on current tab
-    getActiveTab((tab) => {
-      chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "search_on_page", query: "Apple iPhone 17" } });
-      chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "scroll", direction: "down" } });
-      chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "summarize", summary: data.summary } });
+    // Also execute search/scroll on the tab this query was actually about
+    withVerifiedTab(boundTabId, (tabId) => {
+      chrome.tabs.sendMessage(tabId, { type: "EXECUTE_ACTION", action: { action: "search_on_page", query: "Apple iPhone 17" } });
+      chrome.tabs.sendMessage(tabId, { type: "EXECUTE_ACTION", action: { action: "scroll", direction: "down" } });
+      chrome.tabs.sendMessage(tabId, { type: "EXECUTE_ACTION", action: { action: "summarize", summary: data.summary } });
     });
   }
 
@@ -367,11 +394,11 @@ function renderChatAgentResponse(data) {
 
           // Check if local address exists
           if (!localProfile.address) {
-            promptMissingLocation();
+            promptMissingLocation(boundTabId);
             return;
           }
 
-          executeAutofillWithProfile();
+          executeAutofillWithProfile(boundTabId);
         });
       }
       if (cancelBtn) {
@@ -392,7 +419,7 @@ function renderChatAgentResponse(data) {
         <div class="order-summary-box">
           <div><strong>Item:</strong> ${escapeHtml(summary.item || "Apple iPhone 17 (128GB)")}</div>
           <div><strong>Price:</strong> ${escapeHtml(summary.price || "₹74,999")}</div>
-          <div><strong>Address:</strong> ${escapeHtml(localProfile.address || "102 MG Road, Indiranagar, Bengaluru")}</div>
+          <div><strong>Address:</strong> ${escapeHtml(localProfile.address || "(no address saved locally)")}</div>
           <div><strong>Delivery:</strong> ${escapeHtml(summary.delivery || "Express Delivery (2-3 days)")}</div>
         </div>
         <div class="permission-actions">
@@ -409,8 +436,13 @@ function renderChatAgentResponse(data) {
       if (confirmBtn) {
         confirmBtn.addEventListener("click", () => {
           confirmBtn.disabled = true;
-          getActiveTab((tab) => {
-            chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "place_order" } }, (res) => {
+          withVerifiedTab(boundTabId, (tabId) => {
+            chrome.tabs.sendMessage(tabId, { type: "EXECUTE_ACTION", action: { action: "place_order" } }, (res) => {
+              if (chrome.runtime.lastError || !res || !res.ok) {
+                addCard(`⚠️ ${(res && res.error) || "Could not place the order."}`, "chat-msg-agent");
+                confirmBtn.disabled = false;
+                return;
+              }
               addCard("🎉 Order placed successfully! Check your demo page for confirmation.", "chat-msg-agent");
             });
           });
@@ -426,14 +458,14 @@ function renderChatAgentResponse(data) {
 
   // 4. Scroll / Summarize Direct Execution
   if (data.action === "scroll") {
-    getActiveTab((tab) => {
-      chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "scroll", direction: data.direction } });
+    withVerifiedTab(boundTabId, (tabId) => {
+      chrome.tabs.sendMessage(tabId, { type: "EXECUTE_ACTION", action: { action: "scroll", direction: data.direction } });
     });
   }
 
   if (data.action === "summarize") {
-    getActiveTab((tab) => {
-      chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "summarize", summary: data.summary } });
+    withVerifiedTab(boundTabId, (tabId) => {
+      chrome.tabs.sendMessage(tabId, { type: "EXECUTE_ACTION", action: { action: "summarize", summary: data.summary } });
     });
   }
 
@@ -467,7 +499,7 @@ function renderChatAgentResponse(data) {
   addCard(cardHtml, "chat-msg-agent");
 }
 
-function promptMissingLocation() {
+function promptMissingLocation(boundTabId) {
   const missingCardId = "missing-loc-" + Date.now();
   const html = `
     <div class="permission-card" style="border-color:#f59e0b;">
@@ -490,23 +522,26 @@ function promptMissingLocation() {
         if (chrome.storage && chrome.storage.local) {
           chrome.storage.local.set({ userProfile: localProfile });
         }
-        executeAutofillWithProfile();
+        executeAutofillWithProfile(boundTabId);
       });
     }
   }, 50);
 }
 
-function executeAutofillWithProfile() {
-  getActiveTab((tab) => {
+function executeAutofillWithProfile(boundTabId) {
+  withVerifiedTab(boundTabId, (tabId) => {
     chrome.tabs.sendMessage(
-      tab.id,
+      tabId,
       {
         type: "EXECUTE_ACTION",
         action: { action: "autofill", profileData: localProfile },
       },
       (res) => {
-        const msg = res && res.ok ? res.message : "Autofilled form fields on-device from local profile.";
-        addCard(`✅ ${msg}<br/><em style="font-size:11px; color:#86efac;">(All data remained strictly in your local browser storage)</em>`, "chat-msg-agent");
+        if (chrome.runtime.lastError || !res || !res.ok) {
+          addCard(`⚠️ ${(res && res.error) || "Could not autofill this page."}`, "chat-msg-agent");
+          return;
+        }
+        addCard(`✅ ${res.message}<br/><em style="font-size:11px; color:#86efac;">(All data remained strictly in your local browser storage)</em>`, "chat-msg-agent");
       }
     );
   });

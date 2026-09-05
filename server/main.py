@@ -157,15 +157,25 @@ def _parse_model_action(raw_text: str, known_refs: set) -> Optional[dict]:
         except json.JSONDecodeError:
             return None
 
-    if not isinstance(action, dict) or action.get("action") not in ALLOWED_ACTIONS:
+    # isinstance(..., str) guards below matter, not just isinstance(action, dict):
+    # a set's "in" check hashes its operand, and valid JSON can still put a
+    # list/dict where a string is expected (e.g. {"action":[]} or
+    # {"action":"click","targetRef":[]}) - without the guard, "x not in
+    # some_set" raises TypeError: unhashable type and crashes /analyze with a
+    # 500 instead of falling back to the rule engine like any other bad output.
+    if not isinstance(action, dict):
+        return None
+    action_type = action.get("action")
+    if not isinstance(action_type, str) or action_type not in ALLOWED_ACTIONS:
         return None
 
     # Never trust a target the model invented - a hallucinated ref would
     # make the extension silently do nothing (content.js just reports
     # "target not found"), which is confusing mid-demo; better to fall back
     # to the rule engine and get a valid action instead.
-    if action["action"] in ("focus", "click"):
-        if action.get("targetRef") not in known_refs:
+    if action_type in ("focus", "click"):
+        target_ref = action.get("targetRef")
+        if not isinstance(target_ref, str) or target_ref not in known_refs:
             return None
 
     if action["action"] == "scroll" and action.get("direction") not in ("up", "down"):
@@ -371,6 +381,24 @@ def call_local_llm_chat(query: str, graph_dict: Dict[str, Any], model: Optional[
 GREETING_PATTERN = re.compile(r"^\s*(hi+|hello+|hey+|yo|good\s*(morning|afternoon|evening)|sup)\s*[!.?]*\s*$", re.IGNORECASE)
 
 
+def _any_word_in(q: str, words: List[str]) -> bool:
+    """Word-boundary version of `any(w in q for w in words)`. A plain
+    substring check on short words like "order" or "fill" matches inside
+    unrelated words too - reproduced: "Explain CSS border styles" contains
+    "order" as a substring of "border" and was misrouted into the
+    autofill-permission intent.
+
+    Uses a letter-only boundary (not regex \\b) on purpose: \\b treats "_" as
+    a word character, which would block matching "order" inside the
+    suggested-action query "place_order_final" or "autofill" inside
+    "confirm_autofill" - both real, intentional chip-click queries this
+    function must still route correctly. Only an adjacent LETTER should
+    block a match (blocks "order" in "border", "fill" in "fulfill"); an
+    adjacent "_" or digit should not.
+    """
+    return any(re.search(r"(?<![a-zA-Z])" + re.escape(w) + r"(?![a-zA-Z])", q) for w in words)
+
+
 def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional[str] = None) -> Dict[str, Any]:
     q = query.lower().strip()
 
@@ -424,7 +452,7 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
         }
 
     # 2. Order Confirmation Intent
-    if any(k in q for k in ["confirm order", "place order", "place_order_final", "confirm_order", "proceed to place order"]):
+    if _any_word_in(q, ["confirm order", "place order", "place_order_final", "confirm_order", "proceed to place order"]):
         return {
             "reply": "Please review your order summary before final placement:",
             "action": "request_order_confirmation",
@@ -441,7 +469,7 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
         }
 
     # 3. Buy / Autofill Intent
-    if any(k in q for k in ["buy", "order", "fill", "autofill", "apply", "checkout", "confirm_autofill"]):
+    if _any_word_in(q, ["buy", "order", "fill", "autofill", "apply", "checkout", "confirm_autofill"]):
         return {
             "reply": "I can autofill your details (Name, Email, Phone, Address/Location) directly from your on-device local storage. Your PII will NEVER be sent to the server.",
             "action": "request_autofill_permission",
@@ -541,9 +569,20 @@ def analyze(graph: ScreenGraph):
 def chat(req: ChatRequest):
     graph_dict = req.graph or {}
 
-    # Defense-in-depth: Ensure message & screen graph contain no raw PII
-    combined_dict = {"message": req.message, **graph_dict}
-    leaked = find_raw_pii(combined_dict)
+    # Defense-in-depth: Ensure message, graph, AND history contain no raw
+    # PII. Each input is nested under its own distinct key rather than
+    # merged with **graph_dict - a flat merge let a "message" key inside
+    # graph_dict silently overwrite/shadow the real req.message during this
+    # check (the actual message was still used to decide the reply - this
+    # was a validation-bypass bug, not a redaction bypass). History was
+    # previously not scanned here at all.
+    leaked = find_raw_pii(
+        {
+            "__message__": req.message,
+            "__history__": req.history or [],
+            "__graph__": graph_dict,
+        }
+    )
     if leaked:
         raise HTTPException(
             status_code=400,
