@@ -282,6 +282,22 @@ ollama pull llama3.2:1b   # ~1.3GB, good balance of speed and instruction-follow
 python main.py            # server auto-detects it - no config needed
 ```
 
+**Or let a script do the above for you:**
+
+```powershell
+# Windows
+./scripts/setup-local-llm.ps1
+```
+```bash
+# macOS/Linux
+./scripts/setup-local-llm.sh
+```
+
+It checks whether Ollama is installed, asks before installing it if not
+(via winget on Windows / the official installer on macOS-Linux), waits for
+the service to come up, and pulls the model. It never runs without your
+confirmation — nothing in the server or extension triggers it on its own.
+
 Want something even lighter? `ollama pull qwen2.5:0.5b` (~350MB) works too —
 set `LOCAL_LLM_MODEL=qwen2.5:0.5b` before starting the server. Very small
 models are less reliable at producing clean JSON, but that's exactly what
