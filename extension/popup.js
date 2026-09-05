@@ -358,16 +358,10 @@ function renderChatAgentResponse(data, boundTabId) {
   }
 
   // 1. Search & Browse / Navigation Action
-  if (data.action === "search_summary") {
+  if (data.action === "search_summary" || data.action === "open_url") {
     if (data.url) {
       chrome.runtime.sendMessage({ type: "NAVIGATE_TAB", url: data.url });
     }
-    // Also execute search/scroll on the tab this query was actually about
-    withVerifiedTab(boundTabId, (tabId) => {
-      chrome.tabs.sendMessage(tabId, { type: "EXECUTE_ACTION", action: { action: "search_on_page", query: "Apple iPhone 17" } });
-      chrome.tabs.sendMessage(tabId, { type: "EXECUTE_ACTION", action: { action: "scroll", direction: "down" } });
-      chrome.tabs.sendMessage(tabId, { type: "EXECUTE_ACTION", action: { action: "summarize", summary: data.summary } });
-    });
   }
 
   // 2. Request Autofill Permission Card

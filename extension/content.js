@@ -408,6 +408,43 @@
     return { links, detectedTypes, sensitiveCount };
   }
 
+  function collectPageTextSnippets(counters) {
+    const headings = [];
+    const textSnippets = [];
+    const seenText = new Set();
+
+    // 1. Collect Headings (h1, h2, h3)
+    document.querySelectorAll("h1, h2, h3").forEach((el) => {
+      const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (txt && txt.length > 2 && !seenText.has(txt)) {
+        seenText.add(txt);
+        const { redactedText } = redactAllPII(txt, counters);
+        headings.push(truncate(redactedText, 120));
+      }
+    });
+
+    // 2. Collect Content Snippets (paragraphs, search result titles/snippets, product titles)
+    const selectors = [
+      ".g h3", ".g p", ".g span",
+      "article h2", "article p",
+      "[class*='title']", "[class*='heading']", "[class*='result']", "[class*='snippet']", "[class*='price']",
+      "p", "li"
+    ];
+
+    document.querySelectorAll(selectors.join(",")).forEach((el) => {
+      if (textSnippets.length >= 25) return;
+      const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (txt && txt.length > 15 && txt.length < 300 && !seenText.has(txt)) {
+        if (el.offsetWidth === 0 && el.offsetHeight === 0) return;
+        seenText.add(txt);
+        const { redactedText } = redactAllPII(txt, counters);
+        textSnippets.push(truncate(redactedText, 200));
+      }
+    });
+
+    return { headings: headings.slice(0, 10), textSnippets: textSnippets.slice(0, 20) };
+  }
+
   function buildScreenGraph() {
     clearRedactionOverlays();
 
@@ -418,6 +455,7 @@
     const fields = collectFields(counters);
     const btns = collectButtons(counters);
     const lnks = collectLinks(counters);
+    const textContent = collectPageTextSnippets(counters);
     const { redactedText: pageTitle } = redactAllPII(document.title, counters);
 
     const detectedTypes = {};
@@ -435,6 +473,8 @@
       pageTitle: pageTitle || document.title, // redactAllPII returns the original text unchanged when nothing matched
       domain: location.hostname,
       scannedAt: new Date().toISOString(),
+      headings: textContent.headings,
+      textSnippets: textContent.textSnippets,
       forms: fields.forms,
       inputs: fields.inputs,
       buttons: btns.buttons,

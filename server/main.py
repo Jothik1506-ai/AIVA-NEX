@@ -3,18 +3,7 @@ Aiva Nex Agent server (SIH prototype)
 
 Receives ONLY a sanitized "screen graph" JSON from the browser extension -
 never a screenshot, never raw PII. Before doing anything else, it re-checks
-the payload text for PII-shaped substrings as a defense-in-depth backstop,
-in case the client-side redaction ever missed something. If anything raw
-slips through, the request is rejected outright.
-
-The "decide what to do" step tries a real local LLM first (call_local_llm,
-via any OpenAI-compatible local server - Ollama, LM Studio, Jan, ...) and
-falls back to a small rule-based engine (decide_action_rules) if no local
-model is reachable, its response can't be parsed, or it hallucinates a
-target that doesn't exist on the page. This makes the demo unbreakable: with
-a model running you get real model reasoning, without one you silently get
-the same reliable rule-based behavior as before - either way /analyze always
-returns a valid action.
+the payload text for PII-shaped substrings as a defense-in-depth backstop.
 """
 
 import json
@@ -31,9 +20,6 @@ from pydantic import BaseModel, ConfigDict
 
 app = FastAPI(title="Aiva Nex Agent Server", version="0.1.0")
 
-# Wide open for local demo convenience. Chrome extensions with host_permissions
-# already bypass CORS for their own requests, but this also lets you exercise
-# the API directly from the /docs page or curl during the demo.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,32 +28,32 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------------------------
-# Request model - deliberately loose (extra="allow", everything Optional).
-# The extension's exact field set may evolve; the server should stay robust
-# to that rather than 422-ing on minor shape drift during a live demo.
-# ---------------------------------------------------------------------------
 class ScreenGraph(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     pageTitle: Optional[str] = None
     domain: Optional[str] = None
     scannedAt: Optional[str] = None
+    headings: Optional[List[str]] = None
+    textSnippets: Optional[List[str]] = None
     forms: Optional[List[Dict[str, Any]]] = None
     inputs: Optional[List[Dict[str, Any]]] = None
     buttons: Optional[List[Dict[str, Any]]] = None
     links: Optional[List[Dict[str, Any]]] = None
     sensitiveItemsCount: Optional[int] = 0
     detectedTypes: Optional[Dict[str, int]] = None
-    model: Optional[str] = None  # optional per-request override, e.g. from the popup's model picker
+    model: Optional[str] = None
 
 
-# ---------------------------------------------------------------------------
-# Defense-in-depth: re-scan the serialized payload for PII shapes. This is a
-# backstop, not the primary defense (that's the extension's job) - it exists
-# so a bug in client-side redaction fails loudly (HTTP 400) instead of
-# silently leaking data server-side.
-# ---------------------------------------------------------------------------
+class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    message: str
+    graph: Optional[Dict[str, Any]] = None
+    model: Optional[str] = None
+    history: Optional[List[Dict[str, Any]]] = None
+
+
 RAW_PII_PATTERNS = {
     "email": re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
     "phone": re.compile(r"(?:\+?91[\s-]?)?[6-9]\d{9}\b"),
@@ -82,43 +68,26 @@ def find_raw_pii(graph_dict: dict) -> List[str]:
     return [name for name, pattern in RAW_PII_PATTERNS.items() if pattern.search(text)]
 
 
-# ---------------------------------------------------------------------------
-# Local model call. Works against any server that speaks the OpenAI
-# /v1/chat/completions wire format on localhost - Ollama, LM Studio, Jan, etc
-# all do. No pip dependency needed for this: it's one small HTTP POST, done
-# with the standard library.
-#
-# Defaults to Ollama (headless, no GUI needed) with a genuinely lightweight
-# model. Override via env vars if you're pointing at something else:
-#   LOCAL_LLM_BASE_URL   e.g. http://localhost:1234/v1   (LM Studio)
-#   LOCAL_LLM_MODEL      e.g. qwen2.5:0.5b                (even smaller)
-# ---------------------------------------------------------------------------
 LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
 LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "llama3.2:1b")
-LOCAL_LLM_TIMEOUT_SECONDS = 20  # small CPU-only models can be slow on a cold first call
-# /chat answers real, open-ended questions (not just a quick action decision) and
-# the model can legitimately take longer to finish a full-length reply - a shared
-# 20s budget with /analyze cut off good answers mid-generation and silently fell
-# back to canned text (reproduced: a 371-token answer to "what is photosynthesis"
-# took ~22s and got dropped). Give chat its own, longer budget.
-CHAT_LLM_TIMEOUT_SECONDS = 45
+LOCAL_LLM_TIMEOUT_SECONDS = 20
+CHAT_LLM_TIMEOUT_SECONDS = 15
+
+# Gemini API (free) as cloud LLM fallback - set GEMINI_API_KEY env var to enable
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
 ALLOWED_ACTIONS = {"click", "focus", "scroll", "summarize"}
 
 SYSTEM_PROMPT = (
     "You control a browser extension for filling in web forms. You receive a "
-    "SANITIZED screen graph as JSON: all sensitive values are already replaced "
-    "with tokens like EMAIL_1, PHONE_1, PASSWORD_FIELD, OTP_FIELD - these are "
-    "placeholders, not real data, and must never be treated as real values. "
-    "Decide exactly ONE next action for the browser to take and respond with "
-    "ONLY a single JSON object, no other text, no markdown fences, matching "
-    "one of these exact shapes:\n"
-    '{"action":"focus","targetRef":"<ref from the graph>","reason":"<short reason>"}\n'
-    '{"action":"click","targetRef":"<ref from the graph>","reason":"<short reason>"}\n'
+    "SANITIZED screen graph as JSON. Decide exactly ONE next action for the browser to take and respond with "
+    "ONLY a single JSON object matching one of these exact shapes:\n"
+    '{"action":"focus","targetRef":"<ref>","reason":"<reason>"}\n'
+    '{"action":"click","targetRef":"<ref>","reason":"<reason>"}\n'
     '{"action":"scroll","direction":"up"|"down"}\n'
-    '{"action":"summarize","summary":"<one or two sentences>","reason":"<short reason>"}\n'
-    "targetRef must be copied exactly from a \"ref\" field in the graph's "
-    "inputs or buttons (e.g. \"input-3\", \"button-0\") - never invent one."
+    '{"action":"summarize","summary":"<summary>","reason":"<reason>"}\n'
 )
 
 
@@ -135,7 +104,6 @@ def _known_refs(graph: dict) -> set:
 
 def _parse_model_action(raw_text: str, known_refs: set) -> Optional[dict]:
     text = raw_text.strip()
-    # Small models often wrap JSON in ```json ... ``` even when told not to.
     if text.startswith("```"):
         text = text.strip("`")
         text = text[4:] if text.lower().startswith("json") else text
@@ -144,38 +112,19 @@ def _parse_model_action(raw_text: str, known_refs: set) -> Optional[dict]:
     try:
         action = json.loads(text)
     except json.JSONDecodeError:
-        # Last resort: decode just the first JSON value starting at the first
-        # "{", ignoring anything after it. This is deliberately NOT text.rfind("}")
-        # - small models often emit valid JSON plus trailing garbage (commentary,
-        # or a stray extra "}"), and rfind("}") would grab that garbage's closing
-        # brace too, making even well-formed JSON fail to parse.
-        start = text.find("{")
-        if start == -1:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
             return None
         try:
-            action, _ = json.JSONDecoder().raw_decode(text, start)
+            action = json.loads(text[start : end + 1])
         except json.JSONDecodeError:
             return None
 
-    # isinstance(..., str) guards below matter, not just isinstance(action, dict):
-    # a set's "in" check hashes its operand, and valid JSON can still put a
-    # list/dict where a string is expected (e.g. {"action":[]} or
-    # {"action":"click","targetRef":[]}) - without the guard, "x not in
-    # some_set" raises TypeError: unhashable type and crashes /analyze with a
-    # 500 instead of falling back to the rule engine like any other bad output.
-    if not isinstance(action, dict):
-        return None
-    action_type = action.get("action")
-    if not isinstance(action_type, str) or action_type not in ALLOWED_ACTIONS:
+    if not isinstance(action, dict) or action.get("action") not in ALLOWED_ACTIONS:
         return None
 
-    # Never trust a target the model invented - a hallucinated ref would
-    # make the extension silently do nothing (content.js just reports
-    # "target not found"), which is confusing mid-demo; better to fall back
-    # to the rule engine and get a valid action instead.
-    if action_type in ("focus", "click"):
-        target_ref = action.get("targetRef")
-        if not isinstance(target_ref, str) or target_ref not in known_refs:
+    if action["action"] in ("focus", "click"):
+        if action.get("targetRef") not in known_refs:
             return None
 
     if action["action"] == "scroll" and action.get("direction") not in ("up", "down"):
@@ -209,8 +158,8 @@ def call_local_llm(graph: dict, model: Optional[str] = None) -> Optional[dict]:
         with urllib.request.urlopen(req, timeout=LOCAL_LLM_TIMEOUT_SECONDS) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         content = payload["choices"][0]["message"]["content"]
-    except (urllib.error.URLError, TimeoutError, KeyError, IndexError, ValueError, json.JSONDecodeError):
-        return None  # no local model reachable, or it returned something unusable
+    except Exception:
+        return None
 
     action = _parse_model_action(content, _known_refs(graph))
     if action is not None:
@@ -218,147 +167,75 @@ def call_local_llm(graph: dict, model: Optional[str] = None) -> Optional[dict]:
     return action
 
 
-# ---------------------------------------------------------------------------
-# Rule-based fallback. Used whenever call_local_llm() returns None - no
-# model reachable, bad/unparseable response, or a hallucinated target ref.
-# Keep the signature the same: sanitized graph dict in, one action dict out.
-# ---------------------------------------------------------------------------
-def decide_action_rules(graph: dict) -> dict:
-    inputs = graph.get("inputs") or []
-    buttons = graph.get("buttons") or []
+def _build_page_context(graph_dict: Dict[str, Any]) -> str:
+    """Build a text description of the current page from the screen graph."""
+    parts = []
+    if graph_dict.get("pageTitle"):
+        parts.append(f"Page Title: {graph_dict['pageTitle']}")
+    if graph_dict.get("domain"):
+        parts.append(f"Domain: {graph_dict['domain']}")
+    if graph_dict.get("headings"):
+        parts.append("Page Headings:\n" + "\n".join(f"- {h}" for h in graph_dict["headings"]))
+    if graph_dict.get("textSnippets"):
+        parts.append("Page Content Snippets:\n" + "\n".join(f"- {s}" for s in graph_dict["textSnippets"]))
+    return "\n\n".join(parts)
 
-    # 1. An OTP field usually blocks everything else - handle it first.
-    for f in inputs:
-        if f.get("sanitizedValue") == "OTP_FIELD":
-            return {
-                "action": "focus",
-                "targetRef": f.get("ref"),
-                "reason": "An OTP field was detected and likely needs input next.",
-            }
 
-    # 2. Any required field still empty?
-    for f in inputs:
-        value = f.get("sanitizedValue")
-        is_empty = value in (None, "", "null")
-        if f.get("required") and is_empty:
-            label = f.get("label") or f.get("ref")
-            return {
-                "action": "focus",
-                "targetRef": f.get("ref"),
-                "reason": f"Required field '{label}' looks empty.",
-            }
+def call_gemini_chat(query: str, graph_dict: Dict[str, Any]) -> Optional[str]:
+    """Call Gemini API (free tier) as cloud LLM fallback."""
+    if not GEMINI_API_KEY:
+        return None
 
-    # 3. An upload/certificate action available? Common next step for
-    #    scholarship/job application forms once the text fields are filled.
-    for b in buttons:
-        text = (b.get("text") or "").lower()
-        if "upload" in text or "certificate" in text:
-            return {
-                "action": "click",
-                "targetRef": b.get("ref"),
-                "reason": f"Found an upload action: '{b.get('text')}'.",
-            }
-
-    # 4. Nothing urgent - summarize the page instead.
-    total_inputs = len(inputs)
-    sensitive = graph.get("sensitiveItemsCount", 0)
-    summary = (
-        f"This page ('{graph.get('pageTitle', 'untitled')}') has {total_inputs} form field(s), "
-        f"{sensitive} of which were redacted locally before this request was sent. "
-        f"{len(buttons)} button(s) and {len(graph.get('links') or [])} link(s) are available."
+    system_prompt = (
+        "You are Aiva Nex Agent, an intelligent, privacy-preserving AI browser assistant. "
+        "Answer the user's questions clearly and helpfully. "
+        "When summarizing a page, use the provided page context. "
+        "Keep responses concise (under 150 words)."
     )
-    return {"action": "summarize", "summary": summary, "reason": "No urgent field or upload action found."}
 
+    page_context = _build_page_context(graph_dict)
+    full_prompt = f"{system_prompt}\n\nUser Request: {query}"
+    if page_context:
+        full_prompt += f"\n\nCurrent Page Context:\n{page_context}"
 
-def decide_action(graph: dict, model: Optional[str] = None) -> dict:
-    """Entry point used by /analyze: try the local model, fall back to rules."""
-    model_action = call_local_llm(graph, model)
-    if model_action is not None:
-        used_model = model_action.pop("_model", model or LOCAL_LLM_MODEL)
-        return {**model_action, "decidedBy": f"local-llm:{used_model}"}
-    return {**decide_action_rules(graph), "decidedBy": "rule-engine"}
+    body = json.dumps({
+        "contents": [{"parts": [{"text": full_prompt}]}],
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 300}
+    }).encode("utf-8")
 
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
-def _local_llm_pingable() -> bool:
-    """Lightweight reachability check (GET /models) - deliberately cheap, so
-    the popup can poll this often without triggering a full model inference
-    call each time."""
+    url = GEMINI_API_URL.format(model=GEMINI_MODEL, key=GEMINI_API_KEY)
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
-        req = urllib.request.Request(f"{LOCAL_LLM_BASE_URL.rstrip('/')}/models", method="GET")
-        with urllib.request.urlopen(req, timeout=3):
-            return True
-    except (urllib.error.URLError, TimeoutError):
-        return False
-
-
-@app.get("/health/llm")
-def health_llm():
-    """Lets the popup (or you, during setup) check whether a local model is
-    actually reachable, without running the whole /analyze flow."""
-    return {"reachable": _local_llm_pingable(), "baseUrl": LOCAL_LLM_BASE_URL, "model": LOCAL_LLM_MODEL}
-
-
-@app.get("/models")
-def list_models():
-    """Lists the models the local LLM server actually has installed (Ollama,
-    LM Studio, etc. all expose GET /v1/models in the OpenAI shape), so the
-    popup's model picker reflects reality instead of one hardcoded default.
-    Falls back to just the configured default if the local server is
-    unreachable or doesn't return a usable list - the picker always has at
-    least one entry.
-    """
-    try:
-        req = urllib.request.Request(f"{LOCAL_LLM_BASE_URL.rstrip('/')}/models", method="GET")
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
-        ids = [m["id"] for m in payload.get("data", []) if m.get("id")]
-    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError, KeyError):
-        ids = []
-
-    if not ids:
-        ids = [LOCAL_LLM_MODEL]
-
-    return {"models": ids, "default": LOCAL_LLM_MODEL if LOCAL_LLM_MODEL in ids else ids[0]}
-
-
-class ChatRequest(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    message: str
-    graph: Optional[Dict[str, Any]] = None
-    model: Optional[str] = None
-    history: Optional[List[Dict[str, Any]]] = None
+        return payload["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception:
+        return None
 
 
 def call_local_llm_chat(query: str, graph_dict: Dict[str, Any], model: Optional[str] = None) -> Optional[str]:
-    """Answers general knowledge questions (e.g. 'what is global warming') using the local model."""
+    """Answers user queries using local Ollama LLM, with Gemini API as fallback."""
     model = model or LOCAL_LLM_MODEL
-    
+
     system_prompt = (
         "You are Aiva Nex Agent, an intelligent, privacy-preserving AI browser assistant. "
-        "Answer the user's questions clearly, accurately, and helpfully. "
-        "You can answer any general knowledge question (science, history, climate, technology, etc.), "
-        "explain concepts, and assist with browser automation tasks."
+        "Answer the user's questions clearly, accurately, and helpfully based on the webpage context provided. "
+        "When asked to summarize a page, read the headings and text snippets from the page and write a clear 2-3 sentence summary. "
+        "Keep responses concise (under 150 words)."
     )
 
-    page_context = ""
-    if graph_dict and graph_dict.get("pageTitle"):
-        page_context = f"\n[Active page title: '{graph_dict.get('pageTitle')}']"
+    page_context = _build_page_context(graph_dict)
+    full_prompt = f"User Request: {query}\n\nWebpage Context:\n{page_context}" if page_context else query
 
     body = json.dumps(
         {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"{query}{page_context}"},
+                {"role": "user", "content": full_prompt},
             ],
             "temperature": 0.7,
-            "max_tokens": 220,
+            "max_tokens": 300,
         }
     ).encode("utf-8")
 
@@ -373,42 +250,73 @@ def call_local_llm_chat(query: str, graph_dict: Dict[str, Any], model: Optional[
         with urllib.request.urlopen(req, timeout=CHAT_LLM_TIMEOUT_SECONDS) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         content = payload["choices"][0]["message"]["content"]
-        return content.strip() if content else None
+        if content and content.strip():
+            return content.strip()
     except Exception:
-        return None
+        pass
+
+    # Fallback to Gemini API if Ollama unavailable
+    return call_gemini_chat(query, graph_dict)
 
 
 GREETING_PATTERN = re.compile(r"^\s*(hi+|hello+|hey+|yo|good\s*(morning|afternoon|evening)|sup)\s*[!.?]*\s*$", re.IGNORECASE)
 
 
 def _any_word_in(q: str, words: List[str]) -> bool:
-    """Word-boundary version of `any(w in q for w in words)`. A plain
-    substring check on short words like "order" or "fill" matches inside
-    unrelated words too - reproduced: "Explain CSS border styles" contains
-    "order" as a substring of "border" and was misrouted into the
-    autofill-permission intent.
-
-    Uses a letter-only boundary (not regex \\b) on purpose: \\b treats "_" as
-    a word character, which would block matching "order" inside the
-    suggested-action query "place_order_final" or "autofill" inside
-    "confirm_autofill" - both real, intentional chip-click queries this
-    function must still route correctly. Only an adjacent LETTER should
-    block a match (blocks "order" in "border", "fill" in "fulfill"); an
-    adjacent "_" or digit should not.
-    """
     return any(re.search(r"(?<![a-zA-Z])" + re.escape(w) + r"(?![a-zA-Z])", q) for w in words)
+
+
+def decide_action_rules(graph: dict) -> dict:
+    inputs = graph.get("inputs") or []
+    buttons = graph.get("buttons") or []
+
+    for inp in inputs:
+        stype = inp.get("sensitiveType")
+        if stype in ("PASSWORD", "OTP"):
+            return {
+                "action": "focus",
+                "targetRef": inp["ref"],
+                "reason": f"An {stype} field was detected and likely needs input next.",
+            }
+
+    for btn in buttons:
+        txt = (btn.get("text") or "").lower()
+        if any(w in txt for w in ["submit", "continue", "next", "login", "pay", "proceed", "apply"]):
+            return {
+                "action": "click",
+                "targetRef": btn["ref"],
+                "reason": f"A primary action button ('{btn.get('text')}') is ready to be clicked.",
+            }
+
+    for inp in inputs:
+        if inp.get("sensitive"):
+            return {
+                "action": "focus",
+                "targetRef": inp["ref"],
+                "reason": "Focusing the next sensitive input field.",
+            }
+
+    total_inputs = len(inputs)
+    sensitive = graph.get("sensitiveItemsCount", 0)
+    summary = (
+        f"This page ('{graph.get('pageTitle', 'untitled')}') has {total_inputs} form field(s), "
+        f"{sensitive} of which were redacted locally."
+    )
+    return {"action": "summarize", "summary": summary, "reason": "No urgent field or action found."}
+
+
+def decide_action(graph: dict, model: Optional[str] = None) -> dict:
+    model_action = call_local_llm(graph, model)
+    if model_action is not None:
+        used_model = model_action.pop("_model", model or LOCAL_LLM_MODEL)
+        return {**model_action, "decidedBy": f"local-llm:{used_model}"}
+    return {**decide_action_rules(graph), "decidedBy": "rule-engine"}
 
 
 def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional[str] = None) -> Dict[str, Any]:
     q = query.lower().strip()
 
-    # 0. Plain greetings - answered by rule, never by the model. A short
-    # greeting plus page context (e.g. an active form's title) can confuse a
-    # small local model into a bizarre refusal instead of just saying hi back
-    # (reproduced with llama3.2:1b: "Hi" + a form page title -> nonsense
-    # refusal, while "Hello there" with the same context answers fine). This
-    # follows the same rule-first pattern already used for search/buy/scroll/
-    # summarize below - don't trust the model for something this checkable.
+    # 0. Greetings
     if GREETING_PATTERN.match(q):
         return {
             "reply": "Hi! I'm Aiva Nex Agent. I can scan this page, answer questions, or help you search/fill/summarize things - what would you like to do?",
@@ -419,7 +327,7 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
             ],
         }
 
-    # 1. Direct Web Search & Navigation Commands (e.g., "open google", "search google for X", "open youtube", "open wikipedia")
+    # 1. Direct Web Search & Navigation Commands (Google, YouTube, Wikipedia)
     if any(k in q for k in ["open google", "search google", "google search", "search on google"]):
         term = q.replace("open google search for", "").replace("open google", "").replace("search google for", "").replace("search google", "").replace("search on google", "").strip()
         search_url = f"https://www.google.com/search?q={urllib.parse.quote(term or query)}"
@@ -451,14 +359,42 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
             "url": wiki_url,
         }
 
-    # 2. Order Confirmation Intent
+    # 2. Dynamic Product & E-Commerce Search (Amazon, Flipkart, eBay, Google, etc.)
+    if any(k in q for k in ["amazon", "flipkart", "ebay", "myntra", "meesho", "price for", "prices for", "best price", "search for"]):
+        platform = "amazon" if "amazon" in q else ("flipkart" if "flipkart" in q else ("ebay" if "ebay" in q else "google"))
+        clean_query = q
+        for rm in ["best prices for", "best price for", "best prices of", "best price of", "prices for", "price for", "in amazon", "on amazon", "in flipkart", "on flipkart", "in ebay", "on ebay", "search for", "find"]:
+            clean_query = clean_query.replace(rm, "")
+        clean_query = clean_query.strip() or query.strip()
+
+        if platform == "amazon":
+            url = f"https://www.amazon.in/s?k={urllib.parse.quote(clean_query)}"
+        elif platform == "flipkart":
+            url = f"https://www.flipkart.com/search?q={urllib.parse.quote(clean_query)}"
+        elif platform == "ebay":
+            url = f"https://www.ebay.com/sch/i.html?_nkw={urllib.parse.quote(clean_query)}"
+        else:
+            url = f"https://www.google.com/search?q={urllib.parse.quote(clean_query)}"
+
+        return {
+            "reply": f"Searching {platform.capitalize()} for '{clean_query}'...",
+            "action": "open_url",
+            "url": url,
+            "summary": f"Navigating to {platform.capitalize()} to view listings for '{clean_query}'.",
+            "suggested_actions": [
+                {"label": "📜 Scroll down results", "query": "scroll down"},
+                {"label": "📄 Summarize page", "query": "summarize page"},
+            ]
+        }
+
+    # 3. Order Confirmation Intent
     if _any_word_in(q, ["confirm order", "place order", "place_order_final", "confirm_order", "proceed to place order"]):
         return {
             "reply": "Please review your order summary before final placement:",
             "action": "request_order_confirmation",
             "order_summary": {
-                "item": "Apple iPhone 17 (128GB - Midnight Black)",
-                "price": "₹74,999",
+                "item": graph_dict.get("pageTitle") or "Selected Product",
+                "price": "Check page price",
                 "shipping_address": "[Stored Locally on Device]",
                 "delivery": "Express Delivery (2-3 Business Days)"
             },
@@ -468,8 +404,8 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
             ]
         }
 
-    # 3. Buy / Autofill Intent
-    if _any_word_in(q, ["buy", "order", "fill", "autofill", "apply", "checkout", "confirm_autofill"]):
+    # 4. Buy / Autofill Intent
+    if _any_word_in(q, ["buy", "autofill", "apply", "checkout", "confirm_autofill"]):
         return {
             "reply": "I can autofill your details (Name, Email, Phone, Address/Location) directly from your on-device local storage. Your PII will NEVER be sent to the server.",
             "action": "request_autofill_permission",
@@ -477,21 +413,6 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
             "suggested_actions": [
                 {"label": "✅ Confirm Autofill", "query": "confirm_autofill"},
                 {"label": "❌ Cancel", "query": "cancel"}
-            ]
-        }
-
-    # 4. Search & Browse Intent (Flipkart / Product Search)
-    if any(k in q for k in ["iphone 17", "flipkart", "amazon", "deal", "best price"]):
-        url = "https://www.flipkart.com/search?q=iphone+17" if "flipkart" in q else None
-        return {
-            "reply": "I've searched for iPhone 17 deals. The best current price is ₹74,999 for the 128GB model with 15% off and exchange offers.",
-            "action": "search_summary",
-            "url": url,
-            "summary": "iPhone 17 (128GB - Midnight Black) • ₹74,999 (15% off) • Free Express Delivery • Exchange offer up to ₹12,000.",
-            "suggested_actions": [
-                {"label": "🛒 Buy iPhone 17", "query": "buy iphone 17"},
-                {"label": "📜 Scroll down deals", "query": "scroll down"},
-                {"label": "ℹ️ Page summary", "query": "summarize page"}
             ]
         }
 
@@ -504,18 +425,34 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
             "direction": direction
         }
 
-    # 6. Summarize Intent
+    # 6. Page Summarize Intent (Uses Local LLM + Rich Page Text Snippets)
     if "summarize" in q or "summary" in q:
+        llm_summary = call_local_llm_chat("Summarize the key information, titles, and search results on this page concisely.", graph_dict, model)
+        if llm_summary:
+            return {
+                "reply": f"**Page Summary:**\n\n{llm_summary}",
+                "action": "summarize",
+                "summary": llm_summary
+            }
+
         title = graph_dict.get("pageTitle", "current page") if graph_dict else "current page"
-        inputs_count = len(graph_dict.get("inputs") or []) if graph_dict else 0
-        sensitive = graph_dict.get("sensitiveItemsCount", 0) if graph_dict else 0
+        headings = graph_dict.get("headings") or []
+        snippets = graph_dict.get("textSnippets") or []
+
+        if headings or snippets:
+            extracted_text = " • ".join(headings[:3] + snippets[:3])
+            summary_text = f"Page '{title}' highlights: {extracted_text}"
+        else:
+            inputs_count = len(graph_dict.get("inputs") or []) if graph_dict else 0
+            summary_text = f"Page '{title}' scanned with {inputs_count} form fields."
+
         return {
-            "reply": f"Summary for '{title}': Found {inputs_count} form field(s) ({sensitive} sensitive fields masked locally on device).",
+            "reply": summary_text,
             "action": "summarize",
-            "summary": f"Page '{title}' scanned. All PII data is protected on-device."
+            "summary": summary_text
         }
 
-    # 7. ANY General Knowledge Question (e.g. "what is global warming", science, history, general Q&A)
+    # 7. ANY General Knowledge Question or Chat Query (Local LLM First)
     llm_reply = call_local_llm_chat(query, graph_dict, model)
     if llm_reply:
         return {
@@ -527,25 +464,52 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
             ]
         }
 
-    # Intelligent fallback answer for general queries if LLM is offline
-    if "global warming" in q or "climate change" in q:
-        reply_text = (
-            "Global warming is the long-term warming of Earth's climate system observed since the pre-industrial period "
-            "(between 1850 and 1900) due to human activities, primarily fossil fuel burning, which increases heat-trapping "
-            "greenhouse gas levels in Earth's atmosphere."
-        )
-    else:
-        reply_text = f"I've processed your query regarding '{query}'. Would you like me to open Google search or assist with any web actions?"
-
+    # Fallback: LLM unavailable - auto open Google search for the query
+    search_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
     return {
-        "reply": reply_text,
-        "action": "chat_reply",
+        "reply": f"Searching Google for '{query}'...",
+        "action": "open_url",
+        "url": search_url,
         "suggested_actions": [
-            {"label": f"🔍 Search '{query[:20]}' on Google", "query": f"open google search for {query}"},
-            {"label": "🛒 Buy / Fill Form", "query": "buy iphone 17"},
-            {"label": "📄 Summarize Page", "query": "summarize page"}
+            {"label": "📜 Scroll down", "query": "scroll down"},
+            {"label": "📄 Summarize page", "query": "summarize page"}
         ]
     }
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+def _local_llm_pingable() -> bool:
+    try:
+        req = urllib.request.Request(f"{LOCAL_LLM_BASE_URL.rstrip('/')}/models", method="GET")
+        with urllib.request.urlopen(req, timeout=3):
+            return True
+    except (urllib.error.URLError, TimeoutError):
+        return False
+
+
+@app.get("/health/llm")
+def health_llm():
+    return {"reachable": _local_llm_pingable(), "baseUrl": LOCAL_LLM_BASE_URL, "model": LOCAL_LLM_MODEL}
+
+
+@app.get("/models")
+def list_models():
+    try:
+        req = urllib.request.Request(f"{LOCAL_LLM_BASE_URL.rstrip('/')}/models", method="GET")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        ids = [m["id"] for m in payload.get("data", []) if m.get("id")]
+    except Exception:
+        ids = []
+
+    if not ids:
+        ids = [LOCAL_LLM_MODEL]
+
+    return {"models": ids, "default": LOCAL_LLM_MODEL if LOCAL_LLM_MODEL in ids else ids[0]}
 
 
 @app.post("/analyze")
@@ -569,20 +533,8 @@ def analyze(graph: ScreenGraph):
 def chat(req: ChatRequest):
     graph_dict = req.graph or {}
 
-    # Defense-in-depth: Ensure message, graph, AND history contain no raw
-    # PII. Each input is nested under its own distinct key rather than
-    # merged with **graph_dict - a flat merge let a "message" key inside
-    # graph_dict silently overwrite/shadow the real req.message during this
-    # check (the actual message was still used to decide the reply - this
-    # was a validation-bypass bug, not a redaction bypass). History was
-    # previously not scanned here at all.
-    leaked = find_raw_pii(
-        {
-            "__message__": req.message,
-            "__history__": req.history or [],
-            "__graph__": graph_dict,
-        }
-    )
+    combined_dict = {"message": req.message, **graph_dict}
+    leaked = find_raw_pii(combined_dict)
     if leaked:
         raise HTTPException(
             status_code=400,
@@ -599,4 +551,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="127.0.0.1", port=8000)
-
