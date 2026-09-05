@@ -1,27 +1,24 @@
 // popup.js
 // UI glue only - all detection/redaction happens in content.js, all network
-// calls happen in background.js. This file just wires buttons to messages
-// and renders the results.
+// calls happen in background.js. This file just wires the dock/log UI to
+// messages and renders the results as cards in the conversation log.
 
 let activeTabId = null;
 let lastGraph = null;
 let lastAction = null;
+let flowStep = "scan"; // "scan" -> "send" -> "done"
 
 const el = {
-  scanBtn: document.getElementById("scanBtn"),
-  sendBtn: document.getElementById("sendBtn"),
-  executeBtn: document.getElementById("executeBtn"),
-  summarySection: document.getElementById("summarySection"),
-  sensitiveCount: document.getElementById("sensitiveCount"),
-  detectedTypesList: document.getElementById("detectedTypesList"),
-  jsonSection: document.getElementById("jsonSection"),
-  jsonPreview: document.getElementById("jsonPreview"),
-  actionSection: document.getElementById("actionSection"),
-  actionBox: document.getElementById("actionBox"),
+  log: document.getElementById("log"),
+  logEmpty: document.getElementById("logEmpty"),
+  primaryActionBtn: document.getElementById("primaryActionBtn"),
+  executeIconBtn: document.getElementById("executeIconBtn"),
+  modelSelect: document.getElementById("modelSelect"),
   statusLine: document.getElementById("statusLine"),
   serverDot: document.getElementById("serverDot"),
-  serverStatusText: document.getElementById("serverStatusText"),
+  serverDotSmall: document.getElementById("serverDotSmall"),
   feedbackToggleBtn: document.getElementById("feedbackToggleBtn"),
+  feedbackPlusBtn: document.getElementById("feedbackPlusBtn"),
   feedbackSection: document.getElementById("feedbackSection"),
   feedbackCategory: document.getElementById("feedbackCategory"),
   feedbackMessage: document.getElementById("feedbackMessage"),
@@ -36,16 +33,22 @@ function setStatus(text, kind) {
   el.statusLine.className = "status-line" + (kind ? " " + kind : "");
 }
 
+function addCard(html) {
+  el.logEmpty.classList.add("hidden");
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = html;
+  el.log.appendChild(card);
+  el.log.scrollTop = el.log.scrollHeight;
+  return card;
+}
+
 function checkServer() {
   chrome.runtime.sendMessage({ type: "PING_SERVER" }, (res) => {
     if (chrome.runtime.lastError) return;
-    if (res && res.ok) {
-      el.serverDot.className = "dot online";
-      el.serverStatusText.textContent = "server online";
-    } else {
-      el.serverDot.className = "dot offline";
-      el.serverStatusText.textContent = "server offline";
-    }
+    const cls = "dot " + (res && res.ok ? "online" : "offline");
+    el.serverDot.className = cls;
+    el.serverDotSmall.className = cls;
   });
 }
 
@@ -55,11 +58,60 @@ function getActiveTab(callback) {
   });
 }
 
-el.scanBtn.addEventListener("click", () => {
+// ---------------------------------------------------------------------
+// Model picker - previously the extension always used whatever single
+// model was hardcoded server-side (LOCAL_LLM_MODEL). The server now
+// exposes GET /models (whatever Ollama/LM Studio actually has installed),
+// so the popup can offer a real choice and send it along with /analyze.
+// ---------------------------------------------------------------------
+function loadModels() {
+  chrome.runtime.sendMessage({ type: "GET_MODELS" }, (res) => {
+    el.modelSelect.innerHTML = "";
+    const models = (res && res.ok && res.data && res.data.models) || [];
+    const list = models.length ? models : ["rule-engine (no local model)"];
+    list.forEach((id) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = id;
+      el.modelSelect.appendChild(opt);
+    });
+    const preferred = res && res.ok && res.data && res.data.default;
+    if (preferred && list.includes(preferred)) el.modelSelect.value = preferred;
+  });
+}
+
+function updatePrimaryButton() {
+  if (flowStep === "scan") {
+    el.primaryActionBtn.textContent = "Scan Page";
+    el.executeIconBtn.classList.add("hidden");
+  } else if (flowStep === "send") {
+    el.primaryActionBtn.textContent = "Send to Server (Sanitized Only)";
+    el.executeIconBtn.classList.add("hidden");
+  } else if (flowStep === "done") {
+    el.primaryActionBtn.textContent = "Scan Again";
+    el.executeIconBtn.classList.remove("hidden");
+  }
+}
+
+el.primaryActionBtn.addEventListener("click", () => {
+  if (flowStep === "scan" || flowStep === "done") {
+    runScan();
+  } else if (flowStep === "send") {
+    runSend();
+  }
+});
+
+el.executeIconBtn.addEventListener("click", () => {
+  runExecute();
+});
+
+function runScan() {
   setStatus("Scanning page…");
+  el.primaryActionBtn.disabled = true;
   getActiveTab((tab) => {
     activeTabId = tab.id;
     chrome.tabs.sendMessage(tab.id, { type: "SCAN_PAGE" }, (res) => {
+      el.primaryActionBtn.disabled = false;
       if (chrome.runtime.lastError || !res || !res.ok) {
         setStatus(
           "Could not scan this page. Try a normal http(s) page and reload it once after installing the extension.",
@@ -69,39 +121,47 @@ el.scanBtn.addEventListener("click", () => {
       }
       lastGraph = res.graph;
       renderScanResults(lastGraph);
+      flowStep = "send";
+      updatePrimaryButton();
       setStatus("Scan complete. Sensitive fields are masked on the page.", "ok");
     });
   });
-});
-
-function renderScanResults(graph) {
-  el.summarySection.classList.remove("hidden");
-  el.jsonSection.classList.remove("hidden");
-  el.sendBtn.classList.remove("hidden");
-
-  el.sensitiveCount.textContent = graph.sensitiveItemsCount;
-  el.detectedTypesList.innerHTML = "";
-  const types = graph.detectedTypes || {};
-  Object.keys(types).forEach((type) => {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = `${type}: ${types[type]}`;
-    el.detectedTypesList.appendChild(chip);
-  });
-  if (Object.keys(types).length === 0) {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = "none detected";
-    el.detectedTypesList.appendChild(chip);
-  }
-
-  el.jsonPreview.textContent = JSON.stringify(graph, null, 2);
 }
 
-el.sendBtn.addEventListener("click", () => {
+function renderScanResults(graph) {
+  const types = graph.detectedTypes || {};
+  const chips = Object.keys(types).length
+    ? Object.keys(types)
+        .map((type) => `<span class="chip">${type}: ${types[type]}</span>`)
+        .join("")
+    : `<span class="chip">none detected</span>`;
+
+  const jsonId = "json-" + Date.now();
+  addCard(`
+    <div class="card-label">Scan result</div>
+    <div class="summary-row"><span>Sensitive items detected</span><strong>${graph.sensitiveItemsCount}</strong></div>
+    <div class="chip-row">${chips}</div>
+    <button class="json-toggle" data-target="${jsonId}">View sanitized screen graph</button>
+    <pre class="json-preview hidden" id="${jsonId}">${escapeHtml(JSON.stringify(graph, null, 2))}</pre>
+  `);
+
+  el.log.querySelector(`[data-target="${jsonId}"]`).addEventListener("click", (e) => {
+    document.getElementById(jsonId).classList.toggle("hidden");
+  });
+}
+
+function escapeHtml(str) {
+  return str.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+function runSend() {
   if (!lastGraph) return;
   setStatus("Sending sanitized context to server…");
-  chrome.runtime.sendMessage({ type: "SEND_TO_SERVER", graph: lastGraph }, (res) => {
+  el.primaryActionBtn.disabled = true;
+  const model = el.modelSelect.value;
+  const graphWithModel = { ...lastGraph, model };
+  chrome.runtime.sendMessage({ type: "SEND_TO_SERVER", graph: graphWithModel }, (res) => {
+    el.primaryActionBtn.disabled = false;
     if (chrome.runtime.lastError || !res) {
       setStatus("Could not reach the server. Is it running on 127.0.0.1:8000?", "error");
       return;
@@ -112,12 +172,13 @@ el.sendBtn.addEventListener("click", () => {
     }
     lastAction = res.action;
     renderAction(lastAction);
+    flowStep = "done";
+    updatePrimaryButton();
     setStatus("Server responded with an action.", "ok");
   });
-});
+}
 
 function renderAction(action) {
-  el.actionSection.classList.remove("hidden");
   const lines = [`<span class="action-type">${action.action}</span>`];
   if (action.targetRef) lines.push(`target: ${action.targetRef}`);
   if (action.direction) lines.push(`direction: ${action.direction}`);
@@ -132,10 +193,10 @@ function renderAction(action) {
       : "⚙️ decided by rule-based fallback (no local model reachable)";
     lines.push(`<span class="decided-by">${label}</span>`);
   }
-  el.actionBox.innerHTML = lines.join("<br/>");
+  addCard(`<div class="card-label">Action returned by server</div>${lines.join("<br/>")}`);
 }
 
-el.executeBtn.addEventListener("click", () => {
+function runExecute() {
   if (!lastAction || activeTabId == null) return;
   chrome.tabs.sendMessage(activeTabId, { type: "EXECUTE_ACTION", action: lastAction }, (res) => {
     if (chrome.runtime.lastError || !res) {
@@ -144,9 +205,11 @@ el.executeBtn.addEventListener("click", () => {
     }
     setStatus(res.ok ? res.message : res.error, res.ok ? "ok" : "error");
   });
-});
+}
 
 checkServer();
+loadModels();
+updatePrimaryButton();
 
 // ---------------------------------------------------------------------
 // Feedback - goes to the AIVA Work Manager feedback inbox, the same
@@ -157,9 +220,11 @@ checkServer();
 
 let selectedRating = null;
 
-el.feedbackToggleBtn.addEventListener("click", () => {
+function toggleFeedback() {
   el.feedbackSection.classList.toggle("hidden");
-});
+}
+el.feedbackToggleBtn.addEventListener("click", toggleFeedback);
+el.feedbackPlusBtn.addEventListener("click", toggleFeedback);
 
 el.ratingRow.querySelectorAll(".star-btn").forEach((btn) => {
   btn.addEventListener("click", () => {

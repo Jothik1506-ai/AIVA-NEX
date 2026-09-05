@@ -58,6 +58,7 @@ class ScreenGraph(BaseModel):
     links: Optional[List[Dict[str, Any]]] = None
     sensitiveItemsCount: Optional[int] = 0
     detectedTypes: Optional[Dict[str, int]] = None
+    model: Optional[str] = None  # optional per-request override, e.g. from the popup's model picker
 
 
 # ---------------------------------------------------------------------------
@@ -163,10 +164,11 @@ def _parse_model_action(raw_text: str, known_refs: set) -> Optional[dict]:
     return action
 
 
-def call_local_llm(graph: dict) -> Optional[dict]:
+def call_local_llm(graph: dict, model: Optional[str] = None) -> Optional[dict]:
+    model = model or LOCAL_LLM_MODEL
     body = json.dumps(
         {
-            "model": LOCAL_LLM_MODEL,
+            "model": model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": json.dumps(graph)},
@@ -190,7 +192,10 @@ def call_local_llm(graph: dict) -> Optional[dict]:
     except (urllib.error.URLError, TimeoutError, KeyError, IndexError, ValueError, json.JSONDecodeError):
         return None  # no local model reachable, or it returned something unusable
 
-    return _parse_model_action(content, _known_refs(graph))
+    action = _parse_model_action(content, _known_refs(graph))
+    if action is not None:
+        action["_model"] = model
+    return action
 
 
 # ---------------------------------------------------------------------------
@@ -245,11 +250,12 @@ def decide_action_rules(graph: dict) -> dict:
     return {"action": "summarize", "summary": summary, "reason": "No urgent field or upload action found."}
 
 
-def decide_action(graph: dict) -> dict:
+def decide_action(graph: dict, model: Optional[str] = None) -> dict:
     """Entry point used by /analyze: try the local model, fall back to rules."""
-    model_action = call_local_llm(graph)
+    model_action = call_local_llm(graph, model)
     if model_action is not None:
-        return {**model_action, "decidedBy": f"local-llm:{LOCAL_LLM_MODEL}"}
+        used_model = model_action.pop("_model", model or LOCAL_LLM_MODEL)
+        return {**model_action, "decidedBy": f"local-llm:{used_model}"}
     return {**decide_action_rules(graph), "decidedBy": "rule-engine"}
 
 
@@ -277,6 +283,29 @@ def health_llm():
     return {"reachable": _local_llm_pingable(), "baseUrl": LOCAL_LLM_BASE_URL, "model": LOCAL_LLM_MODEL}
 
 
+@app.get("/models")
+def list_models():
+    """Lists the models the local LLM server actually has installed (Ollama,
+    LM Studio, etc. all expose GET /v1/models in the OpenAI shape), so the
+    popup's model picker reflects reality instead of one hardcoded default.
+    Falls back to just the configured default if the local server is
+    unreachable or doesn't return a usable list - the picker always has at
+    least one entry.
+    """
+    try:
+        req = urllib.request.Request(f"{LOCAL_LLM_BASE_URL.rstrip('/')}/models", method="GET")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        ids = [m["id"] for m in payload.get("data", []) if m.get("id")]
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError, KeyError):
+        ids = []
+
+    if not ids:
+        ids = [LOCAL_LLM_MODEL]
+
+    return {"models": ids, "default": LOCAL_LLM_MODEL if LOCAL_LLM_MODEL in ids else ids[0]}
+
+
 @app.post("/analyze")
 def analyze(graph: ScreenGraph):
     graph_dict = graph.model_dump()
@@ -291,7 +320,7 @@ def analyze(graph: ScreenGraph):
             ),
         )
 
-    return decide_action(graph_dict)
+    return decide_action(graph_dict, model=graph.model)
 
 
 if __name__ == "__main__":

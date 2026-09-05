@@ -8,66 +8,66 @@
 <body>
   <header class="header">
     <div class="title">
-      <span class="lock">🔒</span>
+      <span class="brand-icon">✳</span>
       <span>Aiva Nex Agent</span>
     </div>
-    <div class="server-status" id="serverStatus">
-      <span class="dot" id="serverDot"></span>
-      <span id="serverStatusText">checking server…</span>
+    <div class="header-actions">
+      <button id="serverStatusBtn" class="icon-btn" title="Server status" type="button">
+        <span class="dot" id="serverDot"></span>
+      </button>
+      <button id="feedbackToggleBtn" class="icon-btn" title="Send feedback" type="button">💬</button>
+      <button class="icon-btn" title="More" type="button">⋯</button>
     </div>
   </header>
 
-  <main class="content">
-    <button id="scanBtn" class="btn btn-primary">Scan Page</button>
-
-    <section class="summary hidden" id="summarySection">
-      <div class="summary-row">
-        <span>Sensitive items detected</span>
-        <strong id="sensitiveCount">0</strong>
-      </div>
-      <div id="detectedTypesList" class="chip-row"></div>
-    </section>
-
-    <section class="json-section hidden" id="jsonSection">
-      <div class="section-label">Sanitized screen graph (what would be sent)</div>
-      <pre id="jsonPreview" class="json-preview"></pre>
-    </section>
-
-    <button id="sendBtn" class="btn btn-secondary hidden">Send to Server (Sanitized Only)</button>
-
-    <section class="action-section hidden" id="actionSection">
-      <div class="section-label">Action returned by server</div>
-      <div class="action-box" id="actionBox"></div>
-      <button id="executeBtn" class="btn btn-primary">Execute Action</button>
-    </section>
-
-    <div class="status-line" id="statusLine"></div>
-
-    <button id="feedbackToggleBtn" class="feedback-toggle" type="button">💬 Send feedback</button>
-    <section class="feedback-section hidden" id="feedbackSection">
-      <div class="section-label">Send feedback</div>
-      <select id="feedbackCategory">
-        <option value="bug">Bug report</option>
-        <option value="idea">Feature idea</option>
-        <option value="praise">Praise</option>
-        <option value="other" selected>Other</option>
-      </select>
-      <textarea id="feedbackMessage" placeholder="What happened, or what would you like to see?" maxlength="4000"></textarea>
-      <div class="rating-row" id="ratingRow">
-        <span>Rating (optional):</span>
-        <button type="button" class="star-btn" data-rating="1">★</button>
-        <button type="button" class="star-btn" data-rating="2">★</button>
-        <button type="button" class="star-btn" data-rating="3">★</button>
-        <button type="button" class="star-btn" data-rating="4">★</button>
-        <button type="button" class="star-btn" data-rating="5">★</button>
-        <button type="button" id="clearRatingBtn" class="clear-rating-btn" title="Clear rating">✕</button>
-      </div>
-      <button id="submitFeedbackBtn" class="btn btn-secondary">Submit Feedback</button>
-      <div class="status-line" id="feedbackStatusLine"></div>
-    </section>
+  <main class="log" id="log">
+    <div class="log-empty" id="logEmpty">
+      <span class="log-empty-icon">✳</span>
+      <p>Scan a page to see what Aiva Nex Agent can do — without any of it leaving your browser.</p>
+    </div>
   </main>
 
-  <footer class="footer">No raw PII ever leaves your browser. Only sanitized context is sent.</footer>
+  <section class="feedback-panel hidden" id="feedbackSection">
+    <div class="section-label">Send feedback</div>
+    <select id="feedbackCategory">
+      <option value="bug">Bug report</option>
+      <option value="idea">Feature idea</option>
+      <option value="praise">Praise</option>
+      <option value="other" selected>Other</option>
+    </select>
+    <textarea id="feedbackMessage" placeholder="What happened, or what would you like to see?" maxlength="4000"></textarea>
+    <div class="rating-row" id="ratingRow">
+      <span>Rating (optional):</span>
+      <button type="button" class="star-btn" data-rating="1">★</button>
+      <button type="button" class="star-btn" data-rating="2">★</button>
+      <button type="button" class="star-btn" data-rating="3">★</button>
+      <button type="button" class="star-btn" data-rating="4">★</button>
+      <button type="button" class="star-btn" data-rating="5">★</button>
+      <button type="button" id="clearRatingBtn" class="clear-rating-btn" title="Clear rating">✕</button>
+    </div>
+    <button id="submitFeedbackBtn" class="btn btn-secondary">Submit Feedback</button>
+    <div class="status-line" id="feedbackStatusLine"></div>
+  </section>
+
+  <footer class="dock">
+    <div class="composer" id="composer">
+      <button id="primaryActionBtn" class="composer-placeholder" type="button">Scan Page</button>
+      <div class="composer-controls">
+        <div class="composer-left">
+          <button class="dock-icon-btn ghost" title="Feedback" id="feedbackPlusBtn" type="button">+</button>
+          <span class="dot" id="serverDotSmall" title="Server status"></span>
+        </div>
+        <div class="composer-right">
+          <label class="model-picker" title="Model used to decide the next action">
+            <select id="modelSelect"></select>
+          </label>
+          <button id="executeIconBtn" class="dock-icon-btn hidden" title="Execute action" type="button">➤</button>
+        </div>
+      </div>
+    </div>
+    <div class="status-line" id="statusLine"></div>
+    <div class="dock-footnote">No raw PII ever leaves your browser. Only sanitized context is sent.</div>
+  </footer>
 
   <script src="popup.js"></script>
 </body>

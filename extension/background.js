@@ -13,6 +13,14 @@ const SERVER_URL = "http://127.0.0.1:8000";
 // from apps with no Work Manager login of their own.
 const FEEDBACK_URL = "https://manager.aivafreelancia.in/api/feedback";
 
+// The extension has no default_popup any more (see manifest.json) - it uses
+// the Side Panel API instead, so the UI opens as a full-height panel docked
+// to the browser window (like Claude for Chrome) rather than a small
+// dropdown. The toolbar icon click has to open it explicitly.
+chrome.action.onClicked.addListener((tab) => {
+  if (tab.windowId != null) chrome.sidePanel.open({ windowId: tab.windowId });
+});
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "SEND_TO_SERVER") {
     fetch(SERVER_URL + "/analyze", {
@@ -34,6 +42,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.type === "PING_SERVER") {
     fetch(SERVER_URL + "/health")
+      .then((res) => res.json())
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (msg.type === "GET_MODELS") {
+    fetch(SERVER_URL + "/models")
       .then((res) => res.json())
       .then((data) => sendResponse({ ok: true, data }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
