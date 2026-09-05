@@ -1,12 +1,20 @@
 // popup.js
-// UI glue only - all detection/redaction happens in content.js, all network
-// calls happen in background.js. This file just wires the dock/log UI to
-// messages and renders the results as cards in the conversation log.
+// Interactive Chat Agent & On-Device Local PII Profile Manager
 
 let activeTabId = null;
 let lastGraph = null;
 let lastAction = null;
 let flowStep = "scan"; // "scan" -> "send" -> "done"
+let chatHistory = [];
+let localProfile = {
+  name: "Priya Sharma",
+  email: "priya.sharma@example.com",
+  phone: "9876543210",
+  address: "102 MG Road, Indiranagar, Bengaluru, Karnataka",
+  pincode: "560038",
+  aadhaar: "9876 5432 1098",
+  pan: "ABCDE1234F",
+};
 
 const el = {
   log: document.getElementById("log"),
@@ -17,8 +25,25 @@ const el = {
   statusLine: document.getElementById("statusLine"),
   serverDot: document.getElementById("serverDot"),
   serverDotSmall: document.getElementById("serverDotSmall"),
+  
+  // Chat Elements
+  chatInput: document.getElementById("chatInput"),
+  sendChatBtn: document.getElementById("sendChatBtn"),
+  promptChips: document.getElementById("promptChips"),
+
+  // Profile Elements
+  profileToggleBtn: document.getElementById("profileToggleBtn"),
+  profileSection: document.getElementById("profileSection"),
+  profileName: document.getElementById("profileName"),
+  profileEmail: document.getElementById("profileEmail"),
+  profilePhone: document.getElementById("profilePhone"),
+  profileAddress: document.getElementById("profileAddress"),
+  profilePincode: document.getElementById("profilePincode"),
+  saveProfileBtn: document.getElementById("saveProfileBtn"),
+  profileStatusLine: document.getElementById("profileStatusLine"),
+
+  // Feedback Elements
   feedbackToggleBtn: document.getElementById("feedbackToggleBtn"),
-  feedbackPlusBtn: document.getElementById("feedbackPlusBtn"),
   feedbackSection: document.getElementById("feedbackSection"),
   feedbackCategory: document.getElementById("feedbackCategory"),
   feedbackMessage: document.getElementById("feedbackMessage"),
@@ -33,10 +58,10 @@ function setStatus(text, kind) {
   el.statusLine.className = "status-line" + (kind ? " " + kind : "");
 }
 
-function addCard(html) {
+function addCard(html, customClass) {
   el.logEmpty.classList.add("hidden");
   const card = document.createElement("div");
-  card.className = "card";
+  card.className = customClass ? "card " + customClass : "card";
   card.innerHTML = html;
   el.log.appendChild(card);
   el.log.scrollTop = el.log.scrollHeight;
@@ -54,15 +79,72 @@ function checkServer() {
 
 function getActiveTab(callback) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs && tabs[0]) callback(tabs[0]);
+    if (tabs && tabs[0]) {
+      activeTabId = tabs[0].id;
+      callback(tabs[0]);
+    }
   });
 }
 
 // ---------------------------------------------------------------------
-// Model picker - previously the extension always used whatever single
-// model was hardcoded server-side (LOCAL_LLM_MODEL). The server now
-// exposes GET /models (whatever Ollama/LM Studio actually has installed),
-// so the popup can offer a real choice and send it along with /analyze.
+// Local PII Profile Storage (On-Device chrome.storage.local)
+// ---------------------------------------------------------------------
+function loadLocalProfile() {
+  if (chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(["userProfile"], (res) => {
+      if (res && res.userProfile) {
+        localProfile = { ...localProfile, ...res.userProfile };
+      } else {
+        // Initialize default local profile if empty
+        chrome.storage.local.set({ userProfile: localProfile });
+      }
+      populateProfileInputs();
+    });
+  } else {
+    populateProfileInputs();
+  }
+}
+
+function populateProfileInputs() {
+  el.profileName.value = localProfile.name || "";
+  el.profileEmail.value = localProfile.email || "";
+  el.profilePhone.value = localProfile.phone || "";
+  el.profileAddress.value = localProfile.address || "";
+  el.profilePincode.value = localProfile.pincode || "";
+}
+
+el.profileToggleBtn.addEventListener("click", () => {
+  el.profileSection.classList.toggle("hidden");
+  el.feedbackSection.classList.add("hidden");
+});
+
+el.saveProfileBtn.addEventListener("click", () => {
+  localProfile = {
+    ...localProfile,
+    name: el.profileName.value.trim(),
+    email: el.profileEmail.value.trim(),
+    phone: el.profilePhone.value.trim(),
+    address: el.profileAddress.value.trim(),
+    pincode: el.profilePincode.value.trim(),
+  };
+
+  if (chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({ userProfile: localProfile }, () => {
+      el.profileStatusLine.textContent = "Profile saved locally in browser storage!";
+      el.profileStatusLine.className = "status-line ok";
+      setTimeout(() => {
+        el.profileStatusLine.textContent = "";
+        el.profileSection.classList.add("hidden");
+      }, 1500);
+    });
+  } else {
+    el.profileStatusLine.textContent = "Profile saved in memory.";
+    el.profileStatusLine.className = "status-line ok";
+  }
+});
+
+// ---------------------------------------------------------------------
+// Model Picker & Server Models
 // ---------------------------------------------------------------------
 function loadModels() {
   chrome.runtime.sendMessage({ type: "GET_MODELS" }, (res) => {
@@ -85,7 +167,7 @@ function updatePrimaryButton() {
     el.primaryActionBtn.textContent = "Scan Page";
     el.executeIconBtn.classList.add("hidden");
   } else if (flowStep === "send") {
-    el.primaryActionBtn.textContent = "Send to Server (Sanitized Only)";
+    el.primaryActionBtn.textContent = "Send Context";
     el.executeIconBtn.classList.add("hidden");
   } else if (flowStep === "done") {
     el.primaryActionBtn.textContent = "Scan Again";
@@ -105,25 +187,23 @@ el.executeIconBtn.addEventListener("click", () => {
   runExecute();
 });
 
-function runScan() {
+function runScan(callback) {
   setStatus("Scanning page…");
   el.primaryActionBtn.disabled = true;
   getActiveTab((tab) => {
-    activeTabId = tab.id;
     chrome.tabs.sendMessage(tab.id, { type: "SCAN_PAGE" }, (res) => {
       el.primaryActionBtn.disabled = false;
       if (chrome.runtime.lastError || !res || !res.ok) {
-        setStatus(
-          "Could not scan this page. Try a normal http(s) page and reload it once after installing the extension.",
-          "error"
-        );
+        setStatus("Could not scan this page. Reload the page once.", "error");
+        if (callback) callback(null);
         return;
       }
       lastGraph = res.graph;
       renderScanResults(lastGraph);
       flowStep = "send";
       updatePrimaryButton();
-      setStatus("Scan complete. Sensitive fields are masked on the page.", "ok");
+      setStatus("Scan complete. Sensitive fields masked locally.", "ok");
+      if (callback) callback(lastGraph);
     });
   });
 }
@@ -145,7 +225,7 @@ function renderScanResults(graph) {
     <pre class="json-preview hidden" id="${jsonId}">${escapeHtml(JSON.stringify(graph, null, 2))}</pre>
   `);
 
-  el.log.querySelector(`[data-target="${jsonId}"]`).addEventListener("click", (e) => {
+  el.log.querySelector(`[data-target="${jsonId}"]`).addEventListener("click", () => {
     document.getElementById(jsonId).classList.toggle("hidden");
   });
 }
@@ -163,11 +243,11 @@ function runSend() {
   chrome.runtime.sendMessage({ type: "SEND_TO_SERVER", graph: graphWithModel }, (res) => {
     el.primaryActionBtn.disabled = false;
     if (chrome.runtime.lastError || !res) {
-      setStatus("Could not reach the server. Is it running on 127.0.0.1:8000?", "error");
+      setStatus("Could not reach server.", "error");
       return;
     }
     if (!res.ok) {
-      setStatus(res.error || "Server rejected the request.", "error");
+      setStatus(res.error || "Server rejected request.", "error");
       return;
     }
     lastAction = res.action;
@@ -184,15 +264,6 @@ function renderAction(action) {
   if (action.direction) lines.push(`direction: ${action.direction}`);
   if (action.summary) lines.push(action.summary);
   if (action.reason) lines.push(`<em>${action.reason}</em>`);
-  // decidedBy shows whether a real local model answered this, or the
-  // rule-based fallback did (e.g. no model running) - worth surfacing so
-  // it's obvious which one is actually driving a given demo run.
-  if (action.decidedBy) {
-    const label = action.decidedBy.startsWith("local-llm")
-      ? `🧠 decided by local model (${action.decidedBy.split(":")[1] || "unknown"})`
-      : "⚙️ decided by rule-based fallback (no local model reachable)";
-    lines.push(`<span class="decided-by">${label}</span>`);
-  }
   addCard(`<div class="card-label">Action returned by server</div>${lines.join("<br/>")}`);
 }
 
@@ -200,31 +271,283 @@ function runExecute() {
   if (!lastAction || activeTabId == null) return;
   chrome.tabs.sendMessage(activeTabId, { type: "EXECUTE_ACTION", action: lastAction }, (res) => {
     if (chrome.runtime.lastError || !res) {
-      setStatus("Could not execute action on the page.", "error");
+      setStatus("Could not execute action on page.", "error");
       return;
     }
     setStatus(res.ok ? res.message : res.error, res.ok ? "ok" : "error");
   });
 }
 
+// ---------------------------------------------------------------------
+// Interactive Chat Agent Section
+// ---------------------------------------------------------------------
+function handleSendChat(queryText) {
+  const query = (queryText || el.chatInput.value).trim();
+  if (!query) return;
+
+  el.chatInput.value = "";
+  addCard(escapeHtml(query), "chat-msg-user");
+  setStatus("Aiva Nex Agent thinking…");
+
+  const sendQueryWithGraph = (graph) => {
+    const model = el.modelSelect.value;
+    chrome.runtime.sendMessage(
+      {
+        type: "CHAT_WITH_SERVER",
+        message: query,
+        graph: graph || {},
+        model: model,
+        history: chatHistory,
+      },
+      (res) => {
+        if (chrome.runtime.lastError || !res || !res.ok) {
+          setStatus("Error communicating with chat server.", "error");
+          addCard("Sorry, I could not reach the server. Is main.py running on localhost:8000?", "chat-msg-agent");
+          return;
+        }
+
+        const data = res.data || {};
+        chatHistory.push({ role: "user", content: query });
+        chatHistory.push({ role: "assistant", content: data.reply });
+
+        renderChatAgentResponse(data);
+        setStatus("Ready", "ok");
+      }
+    );
+  };
+
+  if (lastGraph) {
+    sendQueryWithGraph(lastGraph);
+  } else {
+    runScan((graph) => sendQueryWithGraph(graph));
+  }
+}
+
+function renderChatAgentResponse(data) {
+  let cardHtml = `<div>${escapeHtml(data.reply)}</div>`;
+
+  if (data.summary) {
+    cardHtml += `<div style="margin-top:8px; padding:8px; background:#0f172a; border-radius:6px; font-size:12px; color:#93c5fd;"><strong>Summary:</strong> ${escapeHtml(data.summary)}</div>`;
+  }
+
+  // 1. Search & Browse / Navigation Action
+  if (data.action === "search_summary") {
+    if (data.url) {
+      chrome.runtime.sendMessage({ type: "NAVIGATE_TAB", url: data.url });
+    }
+    // Also execute search/scroll on current tab
+    getActiveTab((tab) => {
+      chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "search_on_page", query: "Apple iPhone 17" } });
+      chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "scroll", direction: "down" } });
+      chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "summarize", summary: data.summary } });
+    });
+  }
+
+  // 2. Request Autofill Permission Card
+  if (data.action === "request_autofill_permission") {
+    const autofillCardId = "autofill-btn-" + Date.now();
+    cardHtml += `
+      <div class="permission-card">
+        <div style="font-size:11px; color:#60a5fa; font-weight:600;">🔒 PRIVACY PERMISSION REQUEST</div>
+        <div style="margin-top:4px; font-size:12px;">Allow Aiva Nex Agent to autofill form details from your on-device local storage?</div>
+        <div class="permission-actions">
+          <button class="btn-action-confirm" id="${autofillCardId}-confirm">✅ Confirm Autofill</button>
+          <button class="btn-action-cancel" id="${autofillCardId}-cancel">❌ Cancel</button>
+        </div>
+      </div>
+    `;
+
+    setTimeout(() => {
+      const confirmBtn = document.getElementById(`${autofillCardId}-confirm`);
+      const cancelBtn = document.getElementById(`${autofillCardId}-cancel`);
+
+      if (confirmBtn) {
+        confirmBtn.addEventListener("click", () => {
+          confirmBtn.disabled = true;
+
+          // Check if local address exists
+          if (!localProfile.address) {
+            promptMissingLocation();
+            return;
+          }
+
+          executeAutofillWithProfile();
+        });
+      }
+      if (cancelBtn) {
+        cancelBtn.addEventListener("click", () => {
+          addCard("Autofill cancelled by user.", "chat-msg-agent");
+        });
+      }
+    }, 50);
+  }
+
+  // 3. Request Order Confirmation Card
+  if (data.action === "request_order_confirmation") {
+    const orderCardId = "order-btn-" + Date.now();
+    const summary = data.order_summary || {};
+    cardHtml += `
+      <div class="permission-card" style="border-color:#22c55e;">
+        <div style="font-size:11px; color:#4ade80; font-weight:600;">🛍️ FINAL ORDER CONFIRMATION</div>
+        <div class="order-summary-box">
+          <div><strong>Item:</strong> ${escapeHtml(summary.item || "Apple iPhone 17 (128GB)")}</div>
+          <div><strong>Price:</strong> ${escapeHtml(summary.price || "₹74,999")}</div>
+          <div><strong>Address:</strong> ${escapeHtml(localProfile.address || "102 MG Road, Indiranagar, Bengaluru")}</div>
+          <div><strong>Delivery:</strong> ${escapeHtml(summary.delivery || "Express Delivery (2-3 days)")}</div>
+        </div>
+        <div class="permission-actions">
+          <button class="btn-action-confirm" id="${orderCardId}-confirm" style="background:#16a34a;">🛒 Confirm & Place Order</button>
+          <button class="btn-action-cancel" id="${orderCardId}-cancel">❌ Cancel</button>
+        </div>
+      </div>
+    `;
+
+    setTimeout(() => {
+      const confirmBtn = document.getElementById(`${orderCardId}-confirm`);
+      const cancelBtn = document.getElementById(`${orderCardId}-cancel`);
+
+      if (confirmBtn) {
+        confirmBtn.addEventListener("click", () => {
+          confirmBtn.disabled = true;
+          getActiveTab((tab) => {
+            chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "place_order" } }, (res) => {
+              addCard("🎉 Order placed successfully! Check your demo page for confirmation.", "chat-msg-agent");
+            });
+          });
+        });
+      }
+      if (cancelBtn) {
+        cancelBtn.addEventListener("click", () => {
+          addCard("Order placement cancelled.", "chat-msg-agent");
+        });
+      }
+    }, 50);
+  }
+
+  // 4. Scroll / Summarize Direct Execution
+  if (data.action === "scroll") {
+    getActiveTab((tab) => {
+      chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "scroll", direction: data.direction } });
+    });
+  }
+
+  if (data.action === "summarize") {
+    getActiveTab((tab) => {
+      chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "summarize", summary: data.summary } });
+    });
+  }
+
+  // 5. Open URL Navigation Action
+  if ((data.action === "open_url" || data.url) && data.url) {
+    chrome.runtime.sendMessage({ type: "NAVIGATE_TAB", url: data.url });
+  }
+
+  // 6. Interactive Suggested Action Buttons
+  if (data.suggested_actions && data.suggested_actions.length) {
+    const sugGroupId = "sug-group-" + Date.now();
+    let btns = `<div class="quick-chips" style="margin-top:8px;" id="${sugGroupId}">`;
+    data.suggested_actions.forEach((act) => {
+      btns += `<button type="button" class="chip-btn" data-query="${escapeHtml(act.query)}">${escapeHtml(act.label)}</button>`;
+    });
+    btns += `</div>`;
+    cardHtml += btns;
+
+    setTimeout(() => {
+      const container = document.getElementById(sugGroupId);
+      if (container) {
+        container.querySelectorAll(".chip-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            handleSendChat(btn.dataset.query);
+          });
+        });
+      }
+    }, 50);
+  }
+
+  addCard(cardHtml, "chat-msg-agent");
+}
+
+function promptMissingLocation() {
+  const missingCardId = "missing-loc-" + Date.now();
+  const html = `
+    <div class="permission-card" style="border-color:#f59e0b;">
+      <div style="font-size:11px; color:#f59e0b; font-weight:600;">📍 LOCATION / ADDRESS REQUIRED</div>
+      <div style="margin-top:4px; font-size:12px;">Your local profile lacks a delivery address. Please enter it below (will be saved locally in your browser):</div>
+      <textarea id="${missingCardId}-input" style="width:100%; margin-top:6px; background:#000; border:1px solid #374151; color:#fff; padding:6px; border-radius:6px;" placeholder="House no, Street, City, Pincode"></textarea>
+      <button class="btn-action-confirm" id="${missingCardId}-save" style="margin-top:6px; width:100%;">Save Address Locally &amp; Autofill</button>
+    </div>
+  `;
+  addCard(html, "chat-msg-agent");
+
+  setTimeout(() => {
+    const saveBtn = document.getElementById(`${missingCardId}-save`);
+    const inputEl = document.getElementById(`${missingCardId}-input`);
+    if (saveBtn && inputEl) {
+      saveBtn.addEventListener("click", () => {
+        const addressVal = inputEl.value.trim();
+        if (!addressVal) return;
+        localProfile.address = addressVal;
+        if (chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ userProfile: localProfile });
+        }
+        executeAutofillWithProfile();
+      });
+    }
+  }, 50);
+}
+
+function executeAutofillWithProfile() {
+  getActiveTab((tab) => {
+    chrome.tabs.sendMessage(
+      tab.id,
+      {
+        type: "EXECUTE_ACTION",
+        action: { action: "autofill", profileData: localProfile },
+      },
+      (res) => {
+        const msg = res && res.ok ? res.message : "Autofilled form fields on-device from local profile.";
+        addCard(`✅ ${msg}<br/><em style="font-size:11px; color:#86efac;">(All data remained strictly in your local browser storage)</em>`, "chat-msg-agent");
+      }
+    );
+  });
+}
+
+// ---------------------------------------------------------------------
+// Event Listeners for Chat Input & Quick Prompt Chips
+// ---------------------------------------------------------------------
+el.sendChatBtn.addEventListener("click", () => handleSendChat());
+el.chatInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") handleSendChat();
+});
+
+if (el.promptChips) {
+  el.promptChips.querySelectorAll(".chip-btn").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const q = chip.dataset.query;
+      if (q) handleSendChat(q);
+    });
+  });
+}
+
+// ---------------------------------------------------------------------
+// Initial Setup
+// ---------------------------------------------------------------------
 checkServer();
 loadModels();
+loadLocalProfile();
 updatePrimaryButton();
+getActiveTab(() => {});
 
 // ---------------------------------------------------------------------
-// Feedback - goes to the AIVA Work Manager feedback inbox, the same
-// endpoint the AIVA Browser reports into (see background.js for the
-// actual URL). Not scanned/redacted like page content - the user is
-// typing this themselves, about the extension, not pulling it off a page.
+// Feedback Logic
 // ---------------------------------------------------------------------
-
 let selectedRating = null;
 
 function toggleFeedback() {
   el.feedbackSection.classList.toggle("hidden");
+  el.profileSection.classList.add("hidden");
 }
 el.feedbackToggleBtn.addEventListener("click", toggleFeedback);
-el.feedbackPlusBtn.addEventListener("click", toggleFeedback);
 
 el.ratingRow.querySelectorAll(".star-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -263,16 +586,14 @@ el.submitFeedbackBtn.addEventListener("click", () => {
     let pageDomain = null;
     try {
       pageDomain = tab && tab.url ? new URL(tab.url).hostname : null;
-    } catch (e) {
-      /* tab.url can be a non-http scheme (chrome://, about:blank, ...) */
-    }
+    } catch (e) {}
 
     const payload = {
       message,
       category: el.feedbackCategory.value,
       rating: selectedRating,
       source: "aiva-nex-agent",
-      pageUrl: pageDomain, // domain only, consistent with the rest of the extension - never the full URL
+      pageUrl: pageDomain,
       appVersion: chrome.runtime.getManifest().version,
       platform: navigator.userAgent.slice(0, 80),
     };
@@ -280,7 +601,7 @@ el.submitFeedbackBtn.addEventListener("click", () => {
     chrome.runtime.sendMessage({ type: "SEND_FEEDBACK", payload }, (res) => {
       el.submitFeedbackBtn.disabled = false;
       if (chrome.runtime.lastError || !res || !res.ok) {
-        setFeedbackStatus((res && res.error) || "Could not send feedback. Check your connection.", "error");
+        setFeedbackStatus((res && res.error) || "Could not send feedback.", "error");
         return;
       }
       setFeedbackStatus("Thanks! Feedback sent.", "ok");

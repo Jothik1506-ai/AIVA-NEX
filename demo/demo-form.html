@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>National Scholarship &amp; Job Portal - Application Form</title>
+<title>Aiva Nex Agent Demo Portal - Application &amp; Shopping</title>
 <style>
   * { box-sizing: border-box; }
   body {
     margin: 0;
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-    background: #eef2f7;
+    background: #f1f5f9;
     color: #1f2937;
   }
   nav {
@@ -20,12 +20,49 @@
     align-items: center;
   }
   nav a { color: #dbeafe; text-decoration: none; margin-left: 18px; font-size: 13px; }
-  .wrap { max-width: 640px; margin: 32px auto; padding: 0 16px; }
+  .search-container {
+    display: flex;
+    align-items: center;
+    background: #fff;
+    border-radius: 6px;
+    padding: 4px 10px;
+    width: 320px;
+  }
+  .search-container input {
+    border: none;
+    outline: none;
+    width: 100%;
+    padding: 6px;
+    font-size: 13px;
+  }
+  .tabs {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .tab-btn {
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    color: #334155;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .tab-btn.active {
+    background: #2563eb;
+    color: #fff;
+    border-color: #2563eb;
+  }
+  .wrap { max-width: 720px; margin: 24px auto; padding: 0 16px; }
   .card {
     background: #fff;
     border-radius: 12px;
     box-shadow: 0 8px 30px rgba(0,0,0,0.08);
     padding: 28px 32px;
+    margin-bottom: 24px;
   }
   h1 { font-size: 20px; margin: 0 0 4px; }
   .subtitle { color: #6b7280; font-size: 13px; margin-bottom: 22px; }
@@ -52,27 +89,147 @@
   }
   #uploadBtn { background: #e5e7eb; color: #1f2937; }
   #submitBtn { background: #16a34a; color: #fff; }
-  footer { text-align: center; font-size: 11px; color: #9ca3af; margin-top: 18px; }
-  footer a { color: #6b7280; }
+  
+  /* Product Card Styling */
+  .product-badge {
+    background: #eff6ff;
+    color: #1d4ed8;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    display: inline-block;
+    margin-bottom: 12px;
+  }
+  .price-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin: 14px 0;
+  }
+  .price { font-size: 26px; font-weight: 800; color: #0f172a; }
+  .original-price { font-size: 14px; text-decoration: line-through; color: #94a3b8; }
+  .discount { font-size: 14px; font-weight: 700; color: #16a34a; }
+  .deals-list {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+  .deals-list li { margin-bottom: 6px; }
+  .buy-btn {
+    background: #ff9f00;
+    color: #fff;
+    font-size: 16px;
+    padding: 14px 28px;
+    width: 100%;
+    border-radius: 8px;
+  }
+  .buy-btn:hover { background: #f39200; }
+  .checkout-card {
+    border-top: 2px dashed #e2e8f0;
+    padding-top: 20px;
+    margin-top: 20px;
+  }
+  .order-success {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    color: #166534;
+    padding: 16px 20px;
+    border-radius: 10px;
+    margin-top: 16px;
+    display: none;
+  }
+  footer { text-align: center; font-size: 11px; color: #9ca3af; margin: 24px 0; }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
 
 <nav>
-  <strong>National Scholarship &amp; Job Portal</strong>
+  <strong>Aiva Nex Demo Store (Flipkart / NexKart)</strong>
+  <div class="search-container">
+    <input type="text" id="searchBar" placeholder="Search for products, brands (e.g. iPhone 17)..." value="Apple iPhone 17 (128GB - Midnight Black)" />
+  </div>
   <span>
-    <a href="#home">Home</a>
-    <a href="#terms">Terms &amp; Conditions</a>
+    <a href="#store">Deals</a>
+    <a href="#scholarship">Scholarship Form</a>
   </span>
 </nav>
 
+<div class="tabs">
+  <button class="tab-btn active" id="tabShopping" onclick="showTab('shopping')">🛍️ Flipkart iPhone 17 Deal</button>
+  <button class="tab-btn" id="tabScholarship" onclick="showTab('scholarship')">📜 Scholarship Application Form</button>
+</div>
+
 <div class="wrap">
-  <div class="card">
-    <h1>Scholarship / Job Application</h1>
+
+  <!-- E-COMMERCE IPHONE 17 SECTION -->
+  <div class="card" id="shoppingSection">
+    <span class="product-badge">Flipkart Assured • Best Price Deal</span>
+    <h1 id="productTitle">Apple iPhone 17 (128GB) - Midnight Black</h1>
+    <div class="subtitle">Latest Model • Super Retina XDR Display • A19 Bionic Chip</div>
+
+    <div class="price-row">
+      <span class="price">₹74,999</span>
+      <span class="original-price">₹89,900</span>
+      <span class="discount">15% OFF</span>
+    </div>
+
+    <div class="deals-list">
+      <strong>Available Offers &amp; Deals:</strong>
+      <ul>
+        <li><strong>Bank Offer:</strong> 10% instant discount up to ₹4,000 on HDFC Credit Cards.</li>
+        <li><strong>Exchange Offer:</strong> Get up to ₹12,000 off on exchanging old smartphone.</li>
+        <li><strong>Partner Offer:</strong> Free 6 Months Apple Music Subscription.</li>
+      </ul>
+    </div>
+
+    <button type="button" class="buy-btn" id="buyNowBtn" onclick="toggleCheckout()">⚡ BUY NOW / PLACE ORDER</button>
+
+    <!-- Shipping & Checkout Section -->
+    <div class="checkout-card hidden" id="checkoutForm">
+      <h2 style="font-size: 16px; margin: 0 0 14px;">Shipping &amp; Delivery Details</h2>
+      <form id="orderForm">
+        <div class="field">
+          <label for="shippingName">Full Name *</label>
+          <input type="text" id="shippingName" name="shippingName" placeholder="e.g. Priya Sharma" required />
+        </div>
+        <div class="field">
+          <label for="shippingEmail">Email Address *</label>
+          <input type="email" id="shippingEmail" name="shippingEmail" placeholder="e.g. priya@example.com" required />
+        </div>
+        <div class="field">
+          <label for="shippingPhone">Phone Number *</label>
+          <input type="tel" id="shippingPhone" name="shippingPhone" placeholder="e.g. 9876543210" required />
+        </div>
+        <div class="field">
+          <label for="shippingAddress">Delivery Address &amp; Location *</label>
+          <textarea id="shippingAddress" name="shippingAddress" placeholder="House no, Street, Landmark, City, State" required></textarea>
+        </div>
+        <div class="field">
+          <label for="shippingPincode">PIN Code *</label>
+          <input type="text" id="shippingPincode" name="shippingPincode" placeholder="e.g. 560001" required />
+        </div>
+        <button type="submit" id="placeOrderBtn" style="background:#16a34a; color:#fff; width:100%; font-size:15px; padding:12px;">✅ Confirm &amp; Place Order</button>
+      </form>
+    </div>
+
+    <div class="order-success" id="orderSuccess">
+      <strong>🎉 Order Placed Successfully!</strong>
+      <p style="margin:4px 0 0; font-size:13px;" id="orderDetailsSummary">Order ID #NX-883921. Estimated delivery: 2-3 business days.</p>
+    </div>
+  </div>
+
+
+  <!-- SCHOLARSHIP APPLICATION FORM SECTION -->
+  <div class="card hidden" id="scholarshipSection">
+    <h1>National Scholarship &amp; Job Application</h1>
     <div class="subtitle">Fill in your details below. Fields marked * are required.</div>
 
     <form id="applicationForm">
-      <!-- A CSRF-style hidden field, to demonstrate hidden-input detection -->
       <input type="hidden" name="csrf_token" value="a1b2c3d4e5f6g7h8" />
 
       <div class="field">
@@ -116,32 +273,47 @@
         <textarea id="address" name="address" placeholder="House no, street, city, state, PIN code" required></textarea>
       </div>
 
-      <div class="field">
-        <label for="comments">Additional Comments (optional)</label>
-        <!-- Pre-filled with free text containing embedded PII, to demo the
-             regex fallback detector on unlabeled/free-text content. -->
-        <textarea id="comments" name="comments">You can also reach me at priya.demo@example.com or 9876501234 if there are any issues with my application.</textarea>
-      </div>
-
       <div class="actions">
-        <input type="file" id="certificateFile" style="display:none" />
-        <button type="button" id="uploadBtn" onclick="document.getElementById('certificateFile').click()">
-          Upload Certificate
-        </button>
         <button type="submit" id="submitBtn">Submit Application</button>
       </div>
     </form>
   </div>
 
   <footer>
-    This is a local demo page for the Aiva Nex Agent prototype. No data on this page is ever submitted anywhere.
+    This is a local demo page for the Aiva Nex Agent prototype. All PII stays local to your browser.
   </footer>
 </div>
 
 <script>
+  function showTab(tab) {
+    if (tab === 'shopping') {
+      document.getElementById('shoppingSection').classList.remove('hidden');
+      document.getElementById('scholarshipSection').classList.add('hidden');
+      document.getElementById('tabShopping').classList.add('active');
+      document.getElementById('tabScholarship').classList.remove('active');
+    } else {
+      document.getElementById('scholarshipSection').classList.remove('hidden');
+      document.getElementById('shoppingSection').classList.add('hidden');
+      document.getElementById('tabScholarship').classList.add('active');
+      document.getElementById('tabShopping').classList.remove('active');
+    }
+  }
+
+  function toggleCheckout() {
+    const form = document.getElementById('checkoutForm');
+    form.classList.remove('hidden');
+    form.scrollIntoView({ behavior: 'smooth' });
+  }
+
+  document.getElementById("orderForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    document.getElementById("orderSuccess").style.display = 'block';
+    document.getElementById("orderSuccess").scrollIntoView({ behavior: 'smooth' });
+  });
+
   document.getElementById("applicationForm").addEventListener("submit", (e) => {
     e.preventDefault();
-    alert("Demo form - nothing is actually submitted.");
+    alert("Application submitted successfully!");
   });
 </script>
 

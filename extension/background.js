@@ -56,6 +56,46 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "CHAT_WITH_SERVER") {
+    fetch(SERVER_URL + "/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: msg.message,
+        graph: msg.graph,
+        model: msg.model,
+        history: msg.history || [],
+      }),
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          sendResponse({ ok: false, error: data.detail || "Server rejected chat request." });
+        } else {
+          sendResponse({ ok: true, data });
+        }
+      })
+      .catch((err) => sendResponse({ ok: false, error: "Could not reach server: " + err.message }));
+    return true;
+  }
+
+  if (msg.type === "NAVIGATE_TAB") {
+    if (msg.url) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs && tabs[0]) {
+          chrome.tabs.update(tabs[0].id, { url: msg.url }, (updatedTab) => {
+            sendResponse({ ok: true, tabId: updatedTab.id });
+          });
+        } else {
+          chrome.tabs.create({ url: msg.url }, (newTab) => {
+            sendResponse({ ok: true, tabId: newTab.id });
+          });
+        }
+      });
+      return true;
+    }
+  }
+
   if (msg.type === "SEND_FEEDBACK") {
     fetch(FEEDBACK_URL, {
       method: "POST",

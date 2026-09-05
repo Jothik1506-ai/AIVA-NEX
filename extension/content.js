@@ -506,6 +506,90 @@
         showSummaryBanner(action.summary || "No summary provided.");
         return { ok: true, message: "Summary displayed on page." };
       }
+      case "autofill":
+      case "AUTOFILL_FORM": {
+        const data = action.profileData || {};
+        let filledCount = 0;
+
+        // Make sure checkout form is visible if on demo page
+        const checkoutForm = document.getElementById("checkoutForm");
+        if (checkoutForm && checkoutForm.classList.contains("hidden")) {
+          checkoutForm.classList.remove("hidden");
+        }
+
+        const inputs = Array.from(document.querySelectorAll("input:not([type='hidden']), textarea, select"));
+        inputs.forEach((el) => {
+          const hint = getFieldHint(el).toLowerCase();
+          const name = (el.name || "").toLowerCase();
+          const id = (el.id || "").toLowerCase();
+          const fullHint = `${hint} ${name} ${id}`;
+
+          let val = null;
+          if (/name/i.test(fullHint) && !/user\s*name/i.test(fullHint)) {
+            val = data.name || "Priya Sharma";
+          } else if (/e[\s-]?mail/i.test(fullHint)) {
+            val = data.email || "priya.sharma@example.com";
+          } else if (/phone|mobile|contact/i.test(fullHint)) {
+            val = data.phone || "9876543210";
+          } else if (/address|location/i.test(fullHint)) {
+            val = data.address || "102 MG Road, Indiranagar, Bengaluru, Karnataka";
+          } else if (/pin\s*code|zip/i.test(fullHint)) {
+            val = data.pincode || "560038";
+          } else if (/aadhaar|aadhar/i.test(fullHint)) {
+            val = data.aadhaar || "9876 5432 1098";
+          } else if (/\bpan\b/i.test(fullHint)) {
+            val = data.pan || "ABCDE1234F";
+          }
+
+          if (val && !el.value) {
+            el.value = val;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            el.style.border = "2px solid #16a34a";
+            el.style.backgroundColor = "#f0fdf4";
+            filledCount++;
+          }
+        });
+
+        const firstFilled = inputs.find((i) => i.value);
+        if (firstFilled) firstFilled.scrollIntoView({ behavior: "smooth", block: "center" });
+
+        return {
+          ok: true,
+          message: `Autofilled ${filledCount} field(s) on-device from your local storage profile.`,
+        };
+      }
+      case "place_order":
+      case "PLACE_ORDER": {
+        const orderBtn =
+          document.getElementById("placeOrderBtn") ||
+          document.querySelector("button[type='submit']") ||
+          Array.from(document.querySelectorAll("button")).find((b) => /place order|confirm order|buy/i.test(b.textContent));
+
+        if (orderBtn) {
+          orderBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+          orderBtn.click();
+          showSummaryBanner("🎉 Order placed successfully! Thank you for using Aiva Nex Agent.");
+          return { ok: true, message: "Order placed successfully on page." };
+        }
+        return { ok: false, error: "Place Order button not found on page." };
+      }
+      case "search_on_page":
+      case "SEARCH_ON_PAGE": {
+        const searchInput =
+          document.getElementById("searchBar") ||
+          document.querySelector("input[type='search']") ||
+          document.querySelector("input[placeholder*='Search']");
+
+        if (searchInput) {
+          searchInput.value = action.query || "Apple iPhone 17";
+          searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+          searchInput.style.border = "2px solid #2563eb";
+          searchInput.scrollIntoView({ behavior: "smooth", block: "center" });
+          return { ok: true, message: `Searched for '${searchInput.value}' on page.` };
+        }
+        return { ok: false, error: "Search bar not found on page." };
+      }
       default:
         return { ok: false, error: "Unknown action: " + action.action };
     }

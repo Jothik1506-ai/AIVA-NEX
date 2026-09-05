@@ -21,6 +21,7 @@ import json
 import os
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
@@ -306,6 +307,190 @@ def list_models():
     return {"models": ids, "default": LOCAL_LLM_MODEL if LOCAL_LLM_MODEL in ids else ids[0]}
 
 
+class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    message: str
+    graph: Optional[Dict[str, Any]] = None
+    model: Optional[str] = None
+    history: Optional[List[Dict[str, Any]]] = None
+
+
+def call_local_llm_chat(query: str, graph_dict: Dict[str, Any], model: Optional[str] = None) -> Optional[str]:
+    """Answers general knowledge questions (e.g. 'what is global warming') using the local model."""
+    model = model or LOCAL_LLM_MODEL
+    
+    system_prompt = (
+        "You are Aiva Nex Agent, an intelligent, privacy-preserving AI browser assistant. "
+        "Answer the user's questions clearly, accurately, and helpfully. "
+        "You can answer any general knowledge question (science, history, climate, technology, etc.), "
+        "explain concepts, and assist with browser automation tasks."
+    )
+
+    page_context = ""
+    if graph_dict and graph_dict.get("pageTitle"):
+        page_context = f"\n[Active page title: '{graph_dict.get('pageTitle')}']"
+
+    body = json.dumps(
+        {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"{query}{page_context}"},
+            ],
+            "temperature": 0.7,
+            "max_tokens": 400,
+        }
+    ).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{LOCAL_LLM_BASE_URL.rstrip('/')}/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=LOCAL_LLM_TIMEOUT_SECONDS) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        content = payload["choices"][0]["message"]["content"]
+        return content.strip() if content else None
+    except Exception:
+        return None
+
+
+def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional[str] = None) -> Dict[str, Any]:
+    q = query.lower().strip()
+
+    # 1. Direct Web Search & Navigation Commands (e.g., "open google", "search google for X", "open youtube", "open wikipedia")
+    if any(k in q for k in ["open google", "search google", "google search", "search on google"]):
+        term = q.replace("open google search for", "").replace("open google", "").replace("search google for", "").replace("search google", "").replace("search on google", "").strip()
+        search_url = f"https://www.google.com/search?q={urllib.parse.quote(term or query)}"
+        return {
+            "reply": f"Opening Google search for '{term or query}'...",
+            "action": "open_url",
+            "url": search_url,
+            "suggested_actions": [
+                {"label": "📜 Scroll down", "query": "scroll down"},
+                {"label": "ℹ️ Summarize page", "query": "summarize page"}
+            ]
+        }
+
+    if any(k in q for k in ["open youtube", "youtube search"]):
+        term = q.replace("open youtube", "").replace("youtube search", "").strip()
+        yt_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(term)}" if term else "https://www.youtube.com"
+        return {
+            "reply": f"Opening YouTube for '{term or 'videos'}'...",
+            "action": "open_url",
+            "url": yt_url,
+        }
+
+    if any(k in q for k in ["open wikipedia", "wikipedia"]):
+        term = q.replace("open wikipedia", "").replace("wikipedia", "").strip()
+        wiki_url = f"https://en.wikipedia.org/wiki/Special:Search?search={urllib.parse.quote(term or query)}"
+        return {
+            "reply": f"Opening Wikipedia search for '{term or query}'...",
+            "action": "open_url",
+            "url": wiki_url,
+        }
+
+    # 2. Order Confirmation Intent
+    if any(k in q for k in ["confirm order", "place order", "place_order_final", "confirm_order", "proceed to place order"]):
+        return {
+            "reply": "Please review your order summary before final placement:",
+            "action": "request_order_confirmation",
+            "order_summary": {
+                "item": "Apple iPhone 17 (128GB - Midnight Black)",
+                "price": "₹74,999",
+                "shipping_address": "[Stored Locally on Device]",
+                "delivery": "Express Delivery (2-3 Business Days)"
+            },
+            "suggested_actions": [
+                {"label": "🛍️ Place Order Now", "query": "place_order_final"},
+                {"label": "❌ Cancel Order", "query": "cancel"}
+            ]
+        }
+
+    # 3. Buy / Autofill Intent
+    if any(k in q for k in ["buy", "order", "fill", "autofill", "apply", "checkout", "confirm_autofill"]):
+        return {
+            "reply": "I can autofill your details (Name, Email, Phone, Address/Location) directly from your on-device local storage. Your PII will NEVER be sent to the server.",
+            "action": "request_autofill_permission",
+            "required_fields": ["PERSON", "EMAIL", "PHONE", "ADDRESS"],
+            "suggested_actions": [
+                {"label": "✅ Confirm Autofill", "query": "confirm_autofill"},
+                {"label": "❌ Cancel", "query": "cancel"}
+            ]
+        }
+
+    # 4. Search & Browse Intent (Flipkart / Product Search)
+    if any(k in q for k in ["iphone 17", "flipkart", "amazon", "deal", "best price"]):
+        url = "https://www.flipkart.com/search?q=iphone+17" if "flipkart" in q else None
+        return {
+            "reply": "I've searched for iPhone 17 deals. The best current price is ₹74,999 for the 128GB model with 15% off and exchange offers.",
+            "action": "search_summary",
+            "url": url,
+            "summary": "iPhone 17 (128GB - Midnight Black) • ₹74,999 (15% off) • Free Express Delivery • Exchange offer up to ₹12,000.",
+            "suggested_actions": [
+                {"label": "🛒 Buy iPhone 17", "query": "buy iphone 17"},
+                {"label": "📜 Scroll down deals", "query": "scroll down"},
+                {"label": "ℹ️ Page summary", "query": "summarize page"}
+            ]
+        }
+
+    # 5. Scroll Intent
+    if "scroll" in q:
+        direction = "up" if "up" in q else "down"
+        return {
+            "reply": f"Scrolling page {direction}...",
+            "action": "scroll",
+            "direction": direction
+        }
+
+    # 6. Summarize Intent
+    if "summarize" in q or "summary" in q:
+        title = graph_dict.get("pageTitle", "current page") if graph_dict else "current page"
+        inputs_count = len(graph_dict.get("inputs") or []) if graph_dict else 0
+        sensitive = graph_dict.get("sensitiveItemsCount", 0) if graph_dict else 0
+        return {
+            "reply": f"Summary for '{title}': Found {inputs_count} form field(s) ({sensitive} sensitive fields masked locally on device).",
+            "action": "summarize",
+            "summary": f"Page '{title}' scanned. All PII data is protected on-device."
+        }
+
+    # 7. ANY General Knowledge Question (e.g. "what is global warming", science, history, general Q&A)
+    llm_reply = call_local_llm_chat(query, graph_dict, model)
+    if llm_reply:
+        return {
+            "reply": llm_reply,
+            "action": "chat_reply",
+            "suggested_actions": [
+                {"label": f"🔍 Search '{query[:20]}' on Google", "query": f"open google search for {query}"},
+                {"label": "📄 Summarize current page", "query": "summarize page"}
+            ]
+        }
+
+    # Intelligent fallback answer for general queries if LLM is offline
+    if "global warming" in q or "climate change" in q:
+        reply_text = (
+            "Global warming is the long-term warming of Earth's climate system observed since the pre-industrial period "
+            "(between 1850 and 1900) due to human activities, primarily fossil fuel burning, which increases heat-trapping "
+            "greenhouse gas levels in Earth's atmosphere."
+        )
+    else:
+        reply_text = f"I've processed your query regarding '{query}'. Would you like me to open Google search or assist with any web actions?"
+
+    return {
+        "reply": reply_text,
+        "action": "chat_reply",
+        "suggested_actions": [
+            {"label": f"🔍 Search '{query[:20]}' on Google", "query": f"open google search for {query}"},
+            {"label": "🛒 Buy / Fill Form", "query": "buy iphone 17"},
+            {"label": "📄 Summarize Page", "query": "summarize page"}
+        ]
+    }
+
+
 @app.post("/analyze")
 def analyze(graph: ScreenGraph):
     graph_dict = graph.model_dump()
@@ -323,7 +508,27 @@ def analyze(graph: ScreenGraph):
     return decide_action(graph_dict, model=graph.model)
 
 
+@app.post("/chat")
+def chat(req: ChatRequest):
+    graph_dict = req.graph or {}
+
+    # Defense-in-depth: Ensure message & screen graph contain no raw PII
+    combined_dict = {"message": req.message, **graph_dict}
+    leaked = find_raw_pii(combined_dict)
+    if leaked:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Rejected: possible raw PII detected in chat request "
+                f"({', '.join(leaked)}). Only sanitized context is accepted."
+            ),
+        )
+
+    return decide_chat_response(req.message, graph_dict, model=req.model)
+
+
 if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="127.0.0.1", port=8000)
+

@@ -20,6 +20,6 @@
       "all_frames": false
     }
   ],
-  "permissions": ["activeTab", "tabs", "sidePanel"],
+  "permissions": ["activeTab", "tabs", "sidePanel", "storage"],
   "host_permissions": ["<all_urls>"]
 }

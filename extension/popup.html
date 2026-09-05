@@ -12,20 +12,47 @@
       <span>Aiva Nex Agent</span>
     </div>
     <div class="header-actions">
+      <button id="profileToggleBtn" class="icon-btn" title="Local PII Profile (On-Device Storage)" type="button">👤</button>
       <button id="serverStatusBtn" class="icon-btn" title="Server status" type="button">
         <span class="dot" id="serverDot"></span>
       </button>
       <button id="feedbackToggleBtn" class="icon-btn" title="Send feedback" type="button">💬</button>
-      <button class="icon-btn" title="More" type="button">⋯</button>
     </div>
   </header>
 
   <main class="log" id="log">
     <div class="log-empty" id="logEmpty">
       <span class="log-empty-icon">✳</span>
-      <p>Scan a page to see what Aiva Nex Agent can do — without any of it leaving your browser.</p>
+      <p>Ask Aiva Nex Agent anything — search Flipkart deals, scroll pages, summarize content, or fill forms locally without sending your PII.</p>
     </div>
   </main>
+
+  <section class="feedback-panel hidden" id="profileSection">
+    <div class="section-label">🔒 On-Device Local PII Profile</div>
+    <div class="profile-hint">Stored strictly in local browser storage (chrome.storage.local). NEVER sent to server.</div>
+    <div class="field">
+      <label>Full Name</label>
+      <input type="text" id="profileName" placeholder="e.g. Priya Sharma" />
+    </div>
+    <div class="field">
+      <label>Email Address</label>
+      <input type="email" id="profileEmail" placeholder="e.g. priya.sharma@example.com" />
+    </div>
+    <div class="field">
+      <label>Phone Number</label>
+      <input type="tel" id="profilePhone" placeholder="e.g. 9876543210" />
+    </div>
+    <div class="field">
+      <label>Address / Delivery Location</label>
+      <textarea id="profileAddress" placeholder="House no, Street, Landmark, City, State"></textarea>
+    </div>
+    <div class="field">
+      <label>PIN Code</label>
+      <input type="text" id="profilePincode" placeholder="e.g. 560038" />
+    </div>
+    <button id="saveProfileBtn" class="btn btn-primary" type="button">Save Profile Locally</button>
+    <div class="status-line" id="profileStatusLine"></div>
+  </section>
 
   <section class="feedback-panel hidden" id="feedbackSection">
     <div class="section-label">Send feedback</div>
@@ -50,11 +77,22 @@
   </section>
 
   <footer class="dock">
+    <div class="quick-chips" id="promptChips">
+      <button type="button" class="chip-btn" data-query="Find iPhone 17 on Flipkart">🔍 iPhone 17 Flipkart</button>
+      <button type="button" class="chip-btn" data-query="buy iphone 17">🛒 Buy / Fill Form</button>
+      <button type="button" class="chip-btn" data-query="scroll down">📜 Scroll</button>
+      <button type="button" class="chip-btn" data-query="summarize page">📄 Summary</button>
+    </div>
+
     <div class="composer" id="composer">
-      <button id="primaryActionBtn" class="composer-placeholder" type="button">Scan Page</button>
+      <div class="chat-input-wrapper">
+        <input type="text" id="chatInput" placeholder="Type a query (e.g. Find iPhone 17 on Flipkart)..." autocomplete="off" />
+        <button id="sendChatBtn" class="send-btn" title="Send query" type="button">➤</button>
+      </div>
+
       <div class="composer-controls">
         <div class="composer-left">
-          <button class="dock-icon-btn ghost" title="Feedback" id="feedbackPlusBtn" type="button">+</button>
+          <button id="primaryActionBtn" class="btn-scan-small" type="button">Scan Page</button>
           <span class="dot" id="serverDotSmall" title="Server status"></span>
         </div>
         <div class="composer-right">
