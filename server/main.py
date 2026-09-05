@@ -138,13 +138,16 @@ def _parse_model_action(raw_text: str, known_refs: set) -> Optional[dict]:
     try:
         action = json.loads(text)
     except json.JSONDecodeError:
-        # Last resort: grab the first {...} block in case the model added
-        # commentary before/after the JSON despite instructions not to.
-        start, end = text.find("{"), text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
+        # Last resort: decode just the first JSON value starting at the first
+        # "{", ignoring anything after it. This is deliberately NOT text.rfind("}")
+        # - small models often emit valid JSON plus trailing garbage (commentary,
+        # or a stray extra "}"), and rfind("}") would grab that garbage's closing
+        # brace too, making even well-formed JSON fail to parse.
+        start = text.find("{")
+        if start == -1:
             return None
         try:
-            action = json.loads(text[start : end + 1])
+            action, _ = json.JSONDecoder().raw_decode(text, start)
         except json.JSONDecodeError:
             return None
 
