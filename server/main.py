@@ -96,6 +96,12 @@ def find_raw_pii(graph_dict: dict) -> List[str]:
 LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
 LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "llama3.2:1b")
 LOCAL_LLM_TIMEOUT_SECONDS = 20  # small CPU-only models can be slow on a cold first call
+# /chat answers real, open-ended questions (not just a quick action decision) and
+# the model can legitimately take longer to finish a full-length reply - a shared
+# 20s budget with /analyze cut off good answers mid-generation and silently fell
+# back to canned text (reproduced: a 371-token answer to "what is photosynthesis"
+# took ~22s and got dropped). Give chat its own, longer budget.
+CHAT_LLM_TIMEOUT_SECONDS = 45
 
 ALLOWED_ACTIONS = {"click", "focus", "scroll", "summarize"}
 
@@ -342,7 +348,7 @@ def call_local_llm_chat(query: str, graph_dict: Dict[str, Any], model: Optional[
                 {"role": "user", "content": f"{query}{page_context}"},
             ],
             "temperature": 0.7,
-            "max_tokens": 400,
+            "max_tokens": 220,
         }
     ).encode("utf-8")
 
@@ -354,7 +360,7 @@ def call_local_llm_chat(query: str, graph_dict: Dict[str, Any], model: Optional[
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=LOCAL_LLM_TIMEOUT_SECONDS) as resp:
+        with urllib.request.urlopen(req, timeout=CHAT_LLM_TIMEOUT_SECONDS) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         content = payload["choices"][0]["message"]["content"]
         return content.strip() if content else None
@@ -362,8 +368,28 @@ def call_local_llm_chat(query: str, graph_dict: Dict[str, Any], model: Optional[
         return None
 
 
+GREETING_PATTERN = re.compile(r"^\s*(hi+|hello+|hey+|yo|good\s*(morning|afternoon|evening)|sup)\s*[!.?]*\s*$", re.IGNORECASE)
+
+
 def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional[str] = None) -> Dict[str, Any]:
     q = query.lower().strip()
+
+    # 0. Plain greetings - answered by rule, never by the model. A short
+    # greeting plus page context (e.g. an active form's title) can confuse a
+    # small local model into a bizarre refusal instead of just saying hi back
+    # (reproduced with llama3.2:1b: "Hi" + a form page title -> nonsense
+    # refusal, while "Hello there" with the same context answers fine). This
+    # follows the same rule-first pattern already used for search/buy/scroll/
+    # summarize below - don't trust the model for something this checkable.
+    if GREETING_PATTERN.match(q):
+        return {
+            "reply": "Hi! I'm Aiva Nex Agent. I can scan this page, answer questions, or help you search/fill/summarize things - what would you like to do?",
+            "action": "chat_reply",
+            "suggested_actions": [
+                {"label": "🔍 Search on Google", "query": "open google search for "},
+                {"label": "📄 Summarize current page", "query": "summarize page"},
+            ],
+        }
 
     # 1. Direct Web Search & Navigation Commands (e.g., "open google", "search google for X", "open youtube", "open wikipedia")
     if any(k in q for k in ["open google", "search google", "google search", "search on google"]):
