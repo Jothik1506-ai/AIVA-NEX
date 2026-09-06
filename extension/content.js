@@ -519,6 +519,32 @@
     setTimeout(() => banner.remove(), 12000);
   }
 
+  // Maps a recognized field hint to the memory category that field resolves
+  // to (docs/MEMORY-ARCHITECTURE-PLAN.md §5.2). Shared by "autofill" (batch,
+  // resolves every recognized field from memory) and "fill_single_field"
+  // (one named field, given an explicit value that never touches storage -
+  // the "use once" path of the ask-to-remember flow, plan §8.1).
+  const FIELD_CATEGORY_RULES = [
+    { re: /name/i, exclude: /user\s*name/i, category: "identity.name", label: "name" },
+    { re: /e[\s-]?mail/i, category: "contact.email", label: "email" },
+    { re: /phone|mobile|contact/i, category: "contact.phone", label: "phone" },
+    { re: /address|location/i, category: "contact.address", label: "address" },
+    { re: /pin\s*code|zip/i, category: "contact.pincode", label: "pincode" },
+    { re: /aadhaar|aadhar/i, category: "identity.governmentId.aadhaar", label: "aadhaar" },
+    { re: /\bpan\b/i, category: "identity.governmentId.pan", label: "pan" },
+  ];
+
+  function isVisibleEl(el) {
+    return !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+  }
+
+  function fieldHintString(el) {
+    const hint = getFieldHint(el).toLowerCase();
+    const name = (el.name || "").toLowerCase();
+    const id = (el.id || "").toLowerCase();
+    return `${hint} ${name} ${id}`;
+  }
+
   function executeAction(action) {
     if (!action || !action.action) return { ok: false, error: "No action provided." };
 
@@ -548,78 +574,106 @@
       }
       case "autofill":
       case "AUTOFILL_FORM": {
-        const data = action.profileData || {};
-        let filledCount = 0;
-        const filledLabels = [];
+        // Each field is resolved individually, live, from AivaMemory right
+        // here - the popup never hands this file a profile blob, so there is
+        // no "whole store" to over-share in the first place (plan §7).
+        return (async () => {
+          let filledCount = 0;
+          const filledLabels = [];
+          // Fields this page visibly asks for that a recognized category
+          // matched, but memory had no value for - handed back so the popup
+          // can offer the generalized ask-to-remember flow (plan §8.1) for
+          // exactly what's actually missing, not a blind re-ask of everything.
+          const unresolvedFields = [];
 
-        // Only fill a form the user can actually see and is actively on -
-        // never reveal/un-hide a form the page itself has hidden. Filling a
-        // form the user hasn't navigated to is filling the wrong context.
-        const isVisible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+          // Only fill a form the user can actually see and is actively on -
+          // never reveal/un-hide a form the page itself has hidden.
+          const candidateForms = Array.from(document.querySelectorAll("form")).filter(isVisibleEl);
+          const scopeEls = candidateForms.length
+            ? candidateForms.flatMap((f) => Array.from(f.querySelectorAll("input:not([type='hidden']), textarea, select")))
+            : Array.from(document.querySelectorAll("input:not([type='hidden']), textarea, select"));
+          const inputs = scopeEls.filter(isVisibleEl);
 
-        const candidateForms = Array.from(document.querySelectorAll("form")).filter(isVisible);
-        // No visible form -> nothing to (safely) fill. Fall back to visible,
-        // non-hidden inputs outside any <form> only if that's genuinely all
-        // there is, rather than silently reaching into hidden containers.
+          for (const el of inputs) {
+            const fullHint = fieldHintString(el);
+            const rule = FIELD_CATEGORY_RULES.find(
+              (r) => r.re.test(fullHint) && !(r.exclude && r.exclude.test(fullHint))
+            );
+            if (!rule) continue;
+
+            const facts = await AivaMemory.getFactsByCategory(rule.category);
+            const fact = facts[0]; // getFactsByCategory already excludes superseded facts
+
+            if (fact && fact.value && !el.value) {
+              el.value = fact.value;
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+              el.style.border = "2px solid #16a34a";
+              el.style.backgroundColor = "#f0fdf4";
+              filledCount++;
+              filledLabels.push(rule.label);
+              await AivaMemory.recordUsage(fact.id);
+            } else if (!fact && !el.value) {
+              unresolvedFields.push({ category: rule.category, key: rule.label, label: rule.label });
+            }
+          }
+
+          const firstFilled = inputs.find((i) => i.value);
+          if (firstFilled) firstFilled.scrollIntoView({ behavior: "smooth", block: "center" });
+
+          // De-dupe (a page can have more than one field mapping to the same
+          // category, e.g. two email inputs).
+          const uniqueUnresolved = Array.from(new Map(unresolvedFields.map((f) => [f.category, f])).values());
+
+          if (filledCount === 0) {
+            return {
+              ok: false,
+              error: "Nothing to autofill - no saved profile values matched a visible field on this page.",
+              unresolvedFields: uniqueUnresolved,
+            };
+          }
+
+          return {
+            ok: true,
+            message: `Autofilled ${filledCount} field(s) on-device from your local storage profile: ${filledLabels.join(", ")}.`,
+            unresolvedFields: uniqueUnresolved,
+          };
+        })();
+      }
+      case "fill_single_field": {
+        // The "use once" path of the ask-to-remember flow (plan §8.1): the
+        // popup already asked the user, in chat, for exactly this one value,
+        // and the user chose not to save it. That value is passed here
+        // directly and used to fill only the matching field(s) - it never
+        // touches AivaMemory/chrome.storage.local at all.
+        if (!action.category || typeof action.value !== "string" || !action.value) {
+          return { ok: false, error: "fill_single_field requires a category and a value." };
+        }
+        const rule = FIELD_CATEGORY_RULES.find((r) => r.category === action.category);
+        if (!rule) return { ok: false, error: `Unrecognized field category: ${action.category}` };
+
+        const candidateForms = Array.from(document.querySelectorAll("form")).filter(isVisibleEl);
         const scopeEls = candidateForms.length
           ? candidateForms.flatMap((f) => Array.from(f.querySelectorAll("input:not([type='hidden']), textarea, select")))
           : Array.from(document.querySelectorAll("input:not([type='hidden']), textarea, select"));
 
-        const inputs = scopeEls.filter(isVisible);
-
-        inputs.forEach((el) => {
-          const hint = getFieldHint(el).toLowerCase();
-          const name = (el.name || "").toLowerCase();
-          const id = (el.id || "").toLowerCase();
-          const fullHint = `${hint} ${name} ${id}`;
-
-          // Only ever use a value the user actually saved locally - never
-          // invent sample/fallback identity data. No saved value -> skip the
-          // field entirely so the user is asked for it instead of a fake
-          // value silently landing in the form.
-          let val = null;
-          let label = null;
-          if (/name/i.test(fullHint) && !/user\s*name/i.test(fullHint)) {
-            val = data.name; label = "name";
-          } else if (/e[\s-]?mail/i.test(fullHint)) {
-            val = data.email; label = "email";
-          } else if (/phone|mobile|contact/i.test(fullHint)) {
-            val = data.phone; label = "phone";
-          } else if (/address|location/i.test(fullHint)) {
-            val = data.address; label = "address";
-          } else if (/pin\s*code|zip/i.test(fullHint)) {
-            val = data.pincode; label = "pincode";
-          } else if (/aadhaar|aadhar/i.test(fullHint)) {
-            val = data.aadhaar; label = "aadhaar";
-          } else if (/\bpan\b/i.test(fullHint)) {
-            val = data.pan; label = "pan";
-          }
-
-          if (val && !el.value) {
-            el.value = val;
-            el.dispatchEvent(new Event("input", { bubbles: true }));
-            el.dispatchEvent(new Event("change", { bubbles: true }));
-            el.style.border = "2px solid #16a34a";
-            el.style.backgroundColor = "#f0fdf4";
-            filledCount++;
-            filledLabels.push(label);
-          }
+        const target = scopeEls.filter(isVisibleEl).find((el) => {
+          const fullHint = fieldHintString(el);
+          return rule.re.test(fullHint) && !(rule.exclude && rule.exclude.test(fullHint)) && !el.value;
         });
 
-        const firstFilled = inputs.find((i) => i.value);
-        if (firstFilled) firstFilled.scrollIntoView({ behavior: "smooth", block: "center" });
-
-        if (filledCount === 0) {
-          return {
-            ok: false,
-            error: "Nothing to autofill - no saved profile values matched a visible field on this page.",
-          };
+        if (!target) {
+          return { ok: false, error: `No empty, visible ${rule.label} field found on this page.` };
         }
 
-        return {
-          ok: true,
-          message: `Autofilled ${filledCount} field(s) on-device from your local storage profile: ${filledLabels.join(", ")}.`,
-        };
+        target.value = action.value;
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+        target.style.border = "2px solid #16a34a";
+        target.style.backgroundColor = "#f0fdf4";
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+
+        return { ok: true, message: `Filled ${rule.label} for this session only - not saved.` };
       }
       case "place_order":
       case "PLACE_ORDER": {
