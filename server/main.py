@@ -168,7 +168,22 @@ def call_local_llm(graph: dict, model: Optional[str] = None) -> Optional[dict]:
 
 
 def _build_page_context(graph_dict: Dict[str, Any]) -> str:
-    """Build a text description of the current page from the screen graph."""
+    """Build a text description of the current page from the screen graph.
+
+    SECURITY INVARIANT (docs/MEMORY-ARCHITECTURE-PLAN.md §9.3): this function
+    is an explicit allow-list of named ScreenGraph fields - NOT a blind
+    json.dumps(graph_dict). Keep it that way. The extension's per-fact memory
+    store (AivaMemory, extension/memory.js) lives only in the browser's
+    chrome.storage.local; this server has no access to it and today's code
+    has no path that threads a memory fact into `graph`, `message`, or
+    `history` in the first place. If a future feature (e.g. V2 smart-compose
+    using saved preferences) ever needs the LLM to see a memory value, it
+    must be passed as an explicit, separately-named field the caller
+    controls - never by writing memory content into the existing `graph`
+    object, which both call_local_llm_chat() and call_gemini_chat() read via
+    this same function. A field this function doesn't explicitly list here
+    can never reach either LLM.
+    """
     parts = []
     if graph_dict.get("pageTitle"):
         parts.append(f"Page Title: {graph_dict['pageTitle']}")
@@ -182,7 +197,17 @@ def _build_page_context(graph_dict: Dict[str, Any]) -> str:
 
 
 def call_gemini_chat(query: str, graph_dict: Dict[str, Any]) -> Optional[str]:
-    """Call Gemini API (free tier) as cloud LLM fallback."""
+    """Call Gemini API (free tier) as cloud LLM fallback.
+
+    This is the one call in this file that leaves the machine - a real
+    external network call to Google, unlike the local-LLM path. Per plan
+    §9.3, memory-derived context must never reach this function. It doesn't
+    today only because nothing upstream threads memory into `query` or
+    `graph_dict` - see the invariant documented on _build_page_context()
+    above, which is what actually enforces this, not a check in this
+    function itself. Do not "simplify" _build_page_context() into a raw
+    dump of graph_dict without re-reading that comment.
+    """
     if not GEMINI_API_KEY:
         return None
 

@@ -6,17 +6,27 @@ let lastGraph = null;
 let lastAction = null;
 let flowStep = "scan"; // "scan" -> "send" -> "done"
 let chatHistory = [];
-// No default/sample identity - a privacy-first agent must not start out
-// holding (and offering to autofill with) values the user never entered.
-let localProfile = {
-  name: "",
-  email: "",
-  phone: "",
-  address: "",
-  pincode: "",
-  aadhaar: "",
-  pan: "",
+
+// Maps the legacy profile form's fields to memory categories
+// (docs/MEMORY-ARCHITECTURE-PLAN.md §5.2). Replaces the old flat
+// `localProfile` blob - every read/write now goes through AivaMemory
+// (memory.js), which classifies sensitivity, tracks provenance, and never
+// silently invents a value the user didn't provide.
+const PROFILE_FIELD_CATEGORIES = {
+  name: "identity.name",
+  email: "contact.email",
+  phone: "contact.phone",
+  address: "contact.address",
+  pincode: "contact.pincode",
 };
+
+/** Live-reads the address fact from memory - used wherever the old flat
+ * `localProfile.address` was read (order-confirmation display, the
+ * autofill-permission gate). Returns "" if nothing is saved. */
+async function getSavedAddress() {
+  const facts = await AivaMemory.getFactsByCategory(PROFILE_FIELD_CATEGORIES.address);
+  return facts.length ? facts[0].value : "";
+}
 
 const el = {
   log: document.getElementById("log"),
@@ -109,29 +119,24 @@ function withVerifiedTab(boundTabId, callback) {
 }
 
 // ---------------------------------------------------------------------
-// Local PII Profile Storage (On-Device chrome.storage.local)
+// Local PII Profile Storage - backed by AivaMemory (memory.js), a
+// normalized per-fact store, not the old single chrome.storage.local blob.
 // ---------------------------------------------------------------------
-function loadLocalProfile() {
-  if (chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(["userProfile"], (res) => {
-      // Nothing to write on first run - an empty profile stays empty until
-      // the user explicitly saves something. Never seed storage ourselves.
-      if (res && res.userProfile) {
-        localProfile = { ...localProfile, ...res.userProfile };
-      }
-      populateProfileInputs();
-    });
-  } else {
-    populateProfileInputs();
+async function loadLocalProfile() {
+  const values = {};
+  for (const [field, category] of Object.entries(PROFILE_FIELD_CATEGORIES)) {
+    const facts = await AivaMemory.getFactsByCategory(category);
+    values[field] = facts.length ? facts[0].value : "";
   }
+  populateProfileInputs(values);
 }
 
-function populateProfileInputs() {
-  el.profileName.value = localProfile.name || "";
-  el.profileEmail.value = localProfile.email || "";
-  el.profilePhone.value = localProfile.phone || "";
-  el.profileAddress.value = localProfile.address || "";
-  el.profilePincode.value = localProfile.pincode || "";
+function populateProfileInputs(values) {
+  el.profileName.value = values.name || "";
+  el.profileEmail.value = values.email || "";
+  el.profilePhone.value = values.phone || "";
+  el.profileAddress.value = values.address || "";
+  el.profilePincode.value = values.pincode || "";
 }
 
 el.profileToggleBtn.addEventListener("click", () => {
@@ -139,9 +144,9 @@ el.profileToggleBtn.addEventListener("click", () => {
   el.feedbackSection.classList.add("hidden");
 });
 
-el.saveProfileBtn.addEventListener("click", () => {
-  localProfile = {
-    ...localProfile,
+el.saveProfileBtn.addEventListener("click", async () => {
+  el.saveProfileBtn.disabled = true;
+  const edits = {
     name: el.profileName.value.trim(),
     email: el.profileEmail.value.trim(),
     phone: el.profilePhone.value.trim(),
@@ -149,18 +154,31 @@ el.saveProfileBtn.addEventListener("click", () => {
     pincode: el.profilePincode.value.trim(),
   };
 
-  if (chrome.storage && chrome.storage.local) {
-    chrome.storage.local.set({ userProfile: localProfile }, () => {
-      el.profileStatusLine.textContent = "Profile saved locally in browser storage!";
-      el.profileStatusLine.className = "status-line ok";
-      setTimeout(() => {
-        el.profileStatusLine.textContent = "";
-        el.profileSection.classList.add("hidden");
-      }, 1500);
-    });
-  } else {
-    el.profileStatusLine.textContent = "Profile saved in memory.";
+  try {
+    for (const [field, value] of Object.entries(edits)) {
+      if (!value) continue; // don't create a fact for a field the user left blank
+      const category = PROFILE_FIELD_CATEGORIES[field];
+      const existing = await AivaMemory.getFactsByCategory(category);
+      if (existing.length) {
+        if (existing[0].value !== value) await AivaMemory.updateFact(existing[0].id, value);
+      } else {
+        await AivaMemory.createFact({ category, key: field, value, source: "user_explicit" });
+      }
+    }
+    el.profileStatusLine.textContent = "Profile saved locally in browser storage!";
     el.profileStatusLine.className = "status-line ok";
+    setTimeout(() => {
+      el.profileStatusLine.textContent = "";
+      el.profileSection.classList.add("hidden");
+    }, 1500);
+  } catch (err) {
+    // classifySensitivity/createFact throw AivaMemory.MemoryRefusedError for
+    // a never_store category - none of these 5 legacy fields should ever hit
+    // that, but never silently swallow a refusal if something changes later.
+    el.profileStatusLine.textContent = err.message || "Could not save profile.";
+    el.profileStatusLine.className = "status-line error";
+  } finally {
+    el.saveProfileBtn.disabled = false;
   }
 });
 
@@ -350,7 +368,7 @@ function handleSendChat(queryText) {
   });
 }
 
-function renderChatAgentResponse(data, boundTabId) {
+async function renderChatAgentResponse(data, boundTabId) {
   let cardHtml = `<div>${escapeHtml(data.reply)}</div>`;
 
   if (data.summary) {
@@ -383,12 +401,34 @@ function renderChatAgentResponse(data, boundTabId) {
       const cancelBtn = document.getElementById(`${autofillCardId}-cancel`);
 
       if (confirmBtn) {
-        confirmBtn.addEventListener("click", () => {
+        confirmBtn.addEventListener("click", async () => {
           confirmBtn.disabled = true;
 
-          // Check if local address exists
-          if (!localProfile.address) {
-            promptMissingLocation(boundTabId);
+          const address = await getSavedAddress();
+          if (!address) {
+            askToRememberFact({
+              category: PROFILE_FIELD_CATEGORIES.address,
+              label: "delivery address",
+              boundTabId,
+              onResolved: ({ value, persisted }) => {
+                if (persisted) {
+                  executeAutofillWithProfile(boundTabId);
+                } else {
+                  // "Use once" never gets written to memory, so a fresh
+                  // autofill pass would flag this same field as unresolved
+                  // again - skip re-asking about it for the rest of this
+                  // confirm-flow (it's already been filled once, on purpose).
+                  const skip = new Set([PROFILE_FIELD_CATEGORIES.address]);
+                  withVerifiedTab(boundTabId, (tabId) => {
+                    chrome.tabs.sendMessage(
+                      tabId,
+                      { type: "EXECUTE_ACTION", action: { action: "fill_single_field", category: PROFILE_FIELD_CATEGORIES.address, value } },
+                      () => executeAutofillWithProfile(boundTabId, skip)
+                    );
+                  });
+                }
+              },
+            });
             return;
           }
 
@@ -407,13 +447,14 @@ function renderChatAgentResponse(data, boundTabId) {
   if (data.action === "request_order_confirmation") {
     const orderCardId = "order-btn-" + Date.now();
     const summary = data.order_summary || {};
+    const savedAddress = await getSavedAddress();
     cardHtml += `
       <div class="permission-card" style="border-color:#22c55e;">
         <div style="font-size:11px; color:#4ade80; font-weight:600;">🛍️ FINAL ORDER CONFIRMATION</div>
         <div class="order-summary-box">
           <div><strong>Item:</strong> ${escapeHtml(summary.item || "Apple iPhone 17 (128GB)")}</div>
           <div><strong>Price:</strong> ${escapeHtml(summary.price || "₹74,999")}</div>
-          <div><strong>Address:</strong> ${escapeHtml(localProfile.address || "(no address saved locally)")}</div>
+          <div><strong>Address:</strong> ${escapeHtml(savedAddress || "(no address saved locally)")}</div>
           <div><strong>Delivery:</strong> ${escapeHtml(summary.delivery || "Express Delivery (2-3 days)")}</div>
         </div>
         <div class="permission-actions">
@@ -493,49 +534,195 @@ function renderChatAgentResponse(data, boundTabId) {
   addCard(cardHtml, "chat-msg-agent");
 }
 
-function promptMissingLocation(boundTabId) {
-  const missingCardId = "missing-loc-" + Date.now();
+// ---------------------------------------------------------------------
+// Generalized "ask to remember" flow (docs/MEMORY-ARCHITECTURE-PLAN.md §8.1)
+// - replaces the old promptMissingLocation(), which only ever handled the
+// address field. Fires for any recognized field content.js's autofill pass
+// couldn't resolve from memory. Always offers Use once / Remember / Cancel,
+// never just a single "save and continue" button - a Sensitive-tier value
+// (plan §6) gets a second, distinct confirmation before Remember actually
+// persists it.
+// ---------------------------------------------------------------------
+function askToRememberFact(opts) {
+  const { category, label, boundTabId, onResolved } = opts;
+  const cardId = "ask-fact-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
   const html = `
     <div class="permission-card" style="border-color:#f59e0b;">
-      <div style="font-size:11px; color:#f59e0b; font-weight:600;">📍 LOCATION / ADDRESS REQUIRED</div>
-      <div style="margin-top:4px; font-size:12px;">Your local profile lacks a delivery address. Please enter it below (will be saved locally in your browser):</div>
-      <textarea id="${missingCardId}-input" style="width:100%; margin-top:6px; background:#000; border:1px solid #374151; color:#fff; padding:6px; border-radius:6px;" placeholder="House no, Street, City, Pincode"></textarea>
-      <button class="btn-action-confirm" id="${missingCardId}-save" style="margin-top:6px; width:100%;">Save Address Locally &amp; Autofill</button>
+      <div style="font-size:11px; color:#f59e0b; font-weight:600;">📍 ${escapeHtml(label.toUpperCase())} NEEDED</div>
+      <div style="margin-top:4px; font-size:12px;">This page is asking for your ${escapeHtml(label)}. I don't have that saved yet. Want to provide it?</div>
+      <textarea id="${cardId}-input" style="width:100%; margin-top:6px; background:#000; border:1px solid #374151; color:#fff; padding:6px; border-radius:6px;" placeholder="${escapeHtml(label)}"></textarea>
+      <div class="permission-actions">
+        <button class="btn-action-confirm" id="${cardId}-once">Use once</button>
+        <button class="btn-action-confirm" id="${cardId}-remember" style="background:#2563eb;">Remember</button>
+        <button class="btn-action-cancel" id="${cardId}-cancel">❌ Cancel</button>
+      </div>
     </div>
   `;
   addCard(html, "chat-msg-agent");
 
   setTimeout(() => {
-    const saveBtn = document.getElementById(`${missingCardId}-save`);
-    const inputEl = document.getElementById(`${missingCardId}-input`);
-    if (saveBtn && inputEl) {
-      saveBtn.addEventListener("click", () => {
-        const addressVal = inputEl.value.trim();
-        if (!addressVal) return;
-        localProfile.address = addressVal;
-        if (chrome.storage && chrome.storage.local) {
-          chrome.storage.local.set({ userProfile: localProfile });
+    const inputEl = document.getElementById(`${cardId}-input`);
+    const onceBtn = document.getElementById(`${cardId}-once`);
+    const rememberBtn = document.getElementById(`${cardId}-remember`);
+    const cancelBtn = document.getElementById(`${cardId}-cancel`);
+    const disableAll = () => {
+      if (onceBtn) onceBtn.disabled = true;
+      if (rememberBtn) rememberBtn.disabled = true;
+      if (cancelBtn) cancelBtn.disabled = true;
+    };
+
+    if (onceBtn) {
+      onceBtn.addEventListener("click", () => {
+        const value = inputEl.value.trim();
+        if (!value) return;
+        disableAll();
+        addCard(`Using your ${escapeHtml(label)} for this action only - not saved.`, "chat-msg-agent");
+        onResolved({ value, persisted: false });
+      });
+    }
+
+    if (rememberBtn) {
+      rememberBtn.addEventListener("click", async () => {
+        const value = inputEl.value.trim();
+        if (!value) return;
+        disableAll();
+
+        let classification;
+        try {
+          classification = AivaMemory.classifySensitivity(category, value);
+        } catch (err) {
+          // never_store - the agent refuses and explains why (plan §6),
+          // never silently drops it or falls back to "use once" on its own.
+          addCard(`⚠️ ${err.message}`, "chat-msg-agent");
+          return;
         }
-        executeAutofillWithProfile(boundTabId);
+
+        const persist = async () => {
+          try {
+            await AivaMemory.createFact({ category, key: category.split(".").pop(), value, source: "user_explicit" });
+            addCard(`Saved your ${escapeHtml(label)} locally. I'll reuse it next time.`, "chat-msg-agent");
+            onResolved({ value, persisted: true });
+          } catch (err) {
+            addCard(`⚠️ ${err.message}`, "chat-msg-agent");
+          }
+        };
+
+        if (classification.level !== "sensitive") {
+          await persist();
+          return;
+        }
+
+        // Sensitive tier: a single click must not be enough to persist this
+        // (plan §6) - a distinct second confirmation, not the standard one.
+        const strongId = cardId + "-strong";
+        addCard(
+          `
+          <div class="permission-card" style="border-color:#b45309;">
+            <div style="font-size:11px; color:#f59e0b; font-weight:600;">⚠️ THIS IS SENSITIVE INFORMATION</div>
+            <div style="margin-top:4px; font-size:12px;">Storing your ${escapeHtml(
+              label
+            )} means it will be available to autofill on any site you use this agent on. Store it anyway?</div>
+            <div class="permission-actions">
+              <button class="btn-action-confirm" id="${strongId}-yes" style="background:#b45309;">Yes, store it</button>
+              <button class="btn-action-cancel" id="${strongId}-no">Use once only</button>
+            </div>
+          </div>
+        `,
+          "chat-msg-agent"
+        );
+        setTimeout(() => {
+          const yesBtn = document.getElementById(`${strongId}-yes`);
+          const noBtn = document.getElementById(`${strongId}-no`);
+          if (yesBtn) {
+            yesBtn.addEventListener("click", () => {
+              yesBtn.disabled = true;
+              if (noBtn) noBtn.disabled = true;
+              persist();
+            });
+          }
+          if (noBtn) {
+            noBtn.addEventListener("click", () => {
+              if (yesBtn) yesBtn.disabled = true;
+              noBtn.disabled = true;
+              addCard(`Using your ${escapeHtml(label)} for this action only - not saved.`, "chat-msg-agent");
+              onResolved({ value, persisted: false });
+            });
+          }
+        }, 50);
+      });
+    }
+
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", () => {
+        disableAll();
+        addCard("Cancelled.", "chat-msg-agent");
       });
     }
   }, 50);
 }
 
-function executeAutofillWithProfile(boundTabId) {
+/**
+ * Offers askToRememberFact() for one unresolved field at a time - asking
+ * about several fields simultaneously would be exactly the "overwhelm the
+ * user" pattern the plan explicitly avoids (progressive disclosure, §3).
+ * `skip` holds categories already handled ("use once") earlier in this same
+ * confirm-flow, so a value that deliberately wasn't persisted isn't
+ * re-requested every time autofill runs again in this chain.
+ */
+function offerToResolveMissingFields(unresolvedFields, boundTabId, skip) {
+  const skipSet = skip || new Set();
+  const remaining = (unresolvedFields || []).filter((f) => !skipSet.has(f.category));
+  if (!remaining.length) return;
+
+  const next = remaining[0];
+  const rest = remaining.slice(1);
+  askToRememberFact({
+    category: next.category,
+    label: next.label,
+    boundTabId,
+    onResolved: ({ value, persisted }) => {
+      if (persisted) {
+        // The next autofill pass will find the newly-saved fact itself, and
+        // will correctly recompute which fields (if any) are still missing.
+        executeAutofillWithProfile(boundTabId, skipSet);
+      } else {
+        const nextSkip = new Set(skipSet);
+        nextSkip.add(next.category);
+        withVerifiedTab(boundTabId, (tabId) => {
+          chrome.tabs.sendMessage(
+            tabId,
+            { type: "EXECUTE_ACTION", action: { action: "fill_single_field", category: next.category, value } },
+            (res) => {
+              if (!res || !res.ok) addCard(`⚠️ ${(res && res.error) || "Could not fill that field."}`, "chat-msg-agent");
+              offerToResolveMissingFields(rest, boundTabId, nextSkip);
+            }
+          );
+        });
+      }
+    },
+  });
+}
+
+function executeAutofillWithProfile(boundTabId, skip) {
+  const skipSet = skip || new Set();
   withVerifiedTab(boundTabId, (tabId) => {
     chrome.tabs.sendMessage(
       tabId,
-      {
-        type: "EXECUTE_ACTION",
-        action: { action: "autofill", profileData: localProfile },
-      },
+      { type: "EXECUTE_ACTION", action: { action: "autofill" } },
       (res) => {
-        if (chrome.runtime.lastError || !res || !res.ok) {
-          addCard(`⚠️ ${(res && res.error) || "Could not autofill this page."}`, "chat-msg-agent");
+        if (chrome.runtime.lastError || !res) {
+          addCard("⚠️ Could not autofill this page.", "chat-msg-agent");
           return;
         }
-        addCard(`✅ ${res.message}<br/><em style="font-size:11px; color:#86efac;">(All data remained strictly in your local browser storage)</em>`, "chat-msg-agent");
+        if (res.ok) {
+          addCard(
+            `✅ ${res.message}<br/><em style="font-size:11px; color:#86efac;">(All data remained strictly in your local browser storage)</em>`,
+            "chat-msg-agent"
+          );
+        } else {
+          addCard(`⚠️ ${res.error || "Could not autofill this page."}`, "chat-msg-agent");
+        }
+        offerToResolveMissingFields(res.unresolvedFields, boundTabId, skipSet);
       }
     );
   });
