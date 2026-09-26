@@ -68,6 +68,22 @@ def find_raw_pii(graph_dict: dict) -> List[str]:
     return [name for name, pattern in RAW_PII_PATTERNS.items() if pattern.search(text)]
 
 
+# --- Visual perception (SIH26171): POST /perceive, see server/vision/ ---
+try:
+    from vision import attach_visual_target, build_router, visual_refs  # noqa: E402
+
+    app.include_router(build_router(pii_patterns=RAW_PII_PATTERNS))
+except ImportError as _vision_err:  # vision deps not installed: DOM-only mode still works
+    print(f"[vision] disabled ({_vision_err}); pip install -r requirements.txt to enable /perceive")
+
+    def attach_visual_target(action, graph):  # type: ignore[no-redef]
+        return action
+
+    def visual_refs(graph):  # type: ignore[no-redef]
+        return set()
+# --- end visual perception ---
+
+
 LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
 LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "llama3.2:1b")
 LOCAL_LLM_TIMEOUT_SECONDS = 20
@@ -92,7 +108,7 @@ SYSTEM_PROMPT = (
 
 
 def _known_refs(graph: dict) -> set:
-    refs = set()
+    refs = set(visual_refs(graph))  # visual ids ("v3") from /perceive (SIH26171)
     for f in graph.get("inputs") or []:
         if f.get("ref"):
             refs.add(f["ref"])
@@ -551,7 +567,8 @@ def analyze(graph: ScreenGraph):
             ),
         )
 
-    return decide_action(graph_dict, model=graph.model)
+    # attach_visual_target is a no-op unless the extension sent visualElements.
+    return attach_visual_target(decide_action(graph_dict, model=graph.model), graph_dict)
 
 
 @app.post("/chat")
