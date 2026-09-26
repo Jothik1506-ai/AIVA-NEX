@@ -317,6 +317,105 @@ python main.py
 back to the rule-based engine, exactly like before this feature existed.
 Nothing else about the demo changes.
 
+## Name & address detection (NER)
+
+Form fields labelled "Name"/"Address" were always tokenised, but a name or
+address typed into free text ("Deliver to Smt. Lakshmi Devi, Flat 4B, Sai
+Residency, Ameerpet Road, Hyderabad 500016") used to go through untouched.
+Now personal **names** become `NAME_n` and **addresses** become `ADDRESS_n`,
+fully on-device, CPU only.
+
+### Setup (one-time)
+
+```bash
+cd server
+python -m venv .venv && .venv\Scripts\activate     # (macOS/Linux: source .venv/bin/activate)
+pip install -r requirements.txt                    # includes spaCy + en_core_web_sm (~12 MB wheel)
+# if the model wheel was skipped/failed:
+python -m spacy download en_core_web_sm
+```
+
+If the model is missing the server still starts and uses the rule layer only
+(`/ner/scan` reports `"engine": "rules-only"`).
+
+### Two-layer design
+
+| Layer | Where | What | Cost |
+|---|---|---|---|
+| 1. Rules | `extension/ner-rules.js`, inside `redactAllPII()` in the content script | Indian honorifics (Mr/Mrs/Shri/Smt/Kumari/Dr), relation markers (S/o, D/o, W/o, C/o), "my name is …", salutations, common Indian surnames; addresses scored from 6-digit PIN code, H.No/D.No/Flat/Plot numbers (`12-3-45`), locality words (Nagar, Colony, Road, Layout, Mandal, District, Village …), state and city names, cue phrases ("I live at", "deliver to") | ~0.4 ms per 2 KB |
+| 2. Model + rules | `server/ner/` on the local FastAPI server | spaCy `en_core_web_sm` PERSON entities + the same Indian rules; GPE/LOC/FAC entities only add evidence to the address score | ~100–130 ms per 2 KB |
+
+Layer 1 runs **before** anything leaves the browser, so the common Indian
+formats are tokenised at the source. Layer 2 is the defence-in-depth
+second check on everything that reaches `/analyze` and `/chat`, catching
+free-text names the rules miss ("Order summary for Vikram Singh").
+
+Rules for keeping false positives down: a lone city is never an address
+("Hyderabad weather" stays as is); an address needs a score of 3 or more
+(PIN = 2, house number = 2, locality word = 1, state = 1, city/landmark = 0.5,
+cue phrase = 1); prices are never PIN codes (`Rs 500080`); tokens that are
+already there (`EMAIL_1`, `PERSON_1`) are skipped; and model PERSON hits that
+are really localities ("Gandhi Nagar") or UI words are dropped.
+
+Within one request the same person or address always gets the same token
+(`Mr. Ravi Kumar` and `Ravi Kumar` both become `NAME_1`). Numbering continues
+after any `NAME_n`/`ADDRESS_n` the extension already produced, so tokens
+never collide.
+
+**Policy** (`AIVA_NER_POLICY`, default `tokenize`): the regex check still
+**rejects** exact-shape PII (email, Aadhaar …) with HTTP 400. For NER hits the
+server **tokenises** them before any LLM (local or cloud fallback) sees the
+payload, because NER is probabilistic and real pages contain names (news
+bylines, authors), so rejecting them would break ordinary pages. Set
+`AIVA_NER_POLICY=reject` for the strict behaviour (400, same message format)
+or `off` to disable it.
+
+### Why spaCy `en_core_web_sm`
+
+| Option | Size | CPU latency (2 KB) | Verdict |
+|---|---|---|---|
+| spaCy `en_core_web_sm` | 12 MB wheel, ~1.4 s cold load | ~70 ms model alone | **chosen**: tiny, pip-installable, no GPU/ONNX toolchain, recognises Indian names well enough ("Anjali Sharma", "Vikram Singh") |
+| Small ONNX transformer NER (e.g. multilingual BERT/XLM-R, int8) | 100–300 MB plus tokenizer | several hundred ms on CPU | rejected for the prototype: 10–25× the download on a slow link, more dependencies (onnxruntime, tokenizers), still misses Indian address structure |
+
+Neither model understands Indian *addresses* (the small model tags
+"Gandhi Nagar" as a PERSON and "Hyderabad 500080" as an EVENT), so the Indian
+rule layer does that job in both cases. Transformers would add weight
+without solving the main problem.
+
+### API
+
+```python
+from ner import detect_names_addresses, tokenize_text
+detect_names_addresses("Ravi Kumar, H.No 12-3-45, Gandhi Nagar, Hyderabad 500080")
+# [{'start': 0, 'end': 10, 'type': 'NAME', 'score': 0.9},
+#  {'start': 12, 'end': 56, 'type': 'ADDRESS', 'score': 0.99}]
+tokenize_text("Ravi Kumar, H.No 12-3-45, Gandhi Nagar, Hyderabad 500080")[0]
+# 'NAME_1, ADDRESS_1'
+```
+
+`POST /ner/scan` with `{"text": "..."}` (dev/debug) returns
+`{spans, tokenized, engine, elapsedMs}`. It never echoes the raw text back
+and nothing in the NER package logs text (only counts).
+
+### Latency (Ryzen 7 7730U, 15 GB RAM, CPU only)
+
+```
+cd server && python -m ner.bench
+engine            : spacy:en_core_web_sm+rules
+model load (cold) : ~1.4 s   (once per process, in a background thread at startup)
+2 KB text         : median ~130 ms
+screen graph (28 snippets): median ~100 ms
+```
+
+### Tests
+
+```bash
+cd server && pip install -r requirements-dev.txt && python -m pytest tests   # server (FastAPI + NER)
+node --test extension/tests/*.test.js                                          # client rule layer
+```
+
+All test names and addresses are invented.
+
 ---
 
 ## Limitations
@@ -328,10 +427,11 @@ Being upfront about what this prototype does and doesn't do:
   (`decide_action_rules()` in `server/main.py`) — reliable, but not "AI
   reasoning." A tiny model (0.5B–1B params) can also just be wrong or slow;
   the fallback logic only catches *malformed* responses, not *bad* ones.
-- **Name and address detection are label-based heuristics**, not true NER.
-  A field is classified as a name/address because its label/placeholder/name
-  attribute says so — this is reliable on structured forms (the actual use
-  case here) but won't catch a name mentioned in unlabeled free text.
+- **Free-text name/address detection is best-effort.** Labelled fields are
+  reliable. In free text, the rule layer and the small spaCy model (see
+  "Name & address detection (NER)") catch common Indian formats, but they can
+  miss unusual names written in lowercase or in a non-Latin script, and can
+  sometimes tokenise a product or brand name that looks like a person's name.
 - **Phone/Aadhaar/PAN/card patterns are shape-based**, not checksum-validated
   (e.g. no real Aadhaar Verhoeff check, no Luhn check on card numbers) — by
   design, since the goal is "don't send anything that looks like PII," not
