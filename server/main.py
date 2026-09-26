@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 # --- [privacy-hardening] begin -------------------------------------------
-from pii_checks import find_validated_pii_types
+from pii_checks import CANDIDATE_PATTERNS, find_validated_pii_types
 from security import install_security
 
 log = logging.getLogger("aiva")
@@ -35,7 +35,7 @@ SnippetStr = Annotated[str, Field(max_length=1000)]
 MAX_ITEMS = 1000
 
 # --- feature/ner: on-device NAME/ADDRESS detection (see server/ner/) --------
-from ner import enforce_ner_policy, router as ner_router, warm_up_async  # noqa: E402
+from ner import enforce_ner_policy, router as ner_router, sanitize_texts, warm_up_async  # noqa: E402
 
 app.include_router(ner_router)  # POST /ner/scan (dev/debug)
 warm_up_async()  # load the spaCy model once, in the background
@@ -75,6 +75,27 @@ def find_raw_pii(graph_dict: dict) -> List[str]:
     reference failing Luhn) are not rejected; see server/pii_checks.py.
     """
     return find_validated_pii_types(graph_dict)
+
+
+# --- Visual perception (SIH26171): POST /perceive, see server/vision/ ---
+try:
+    from vision import attach_visual_target, build_router, visual_refs  # noqa: E402
+
+    # Mask every PII-shaped candidate in OCR text (same patterns as the
+    # extension, validated or not), then NAME/ADDRESS via the NER policy.
+    app.include_router(build_router(
+        pii_patterns={name.lower(): pattern for name, pattern in CANDIDATE_PATTERNS},
+        text_sanitizer=sanitize_texts,
+    ))
+except ImportError as _vision_err:  # vision deps not installed: DOM-only mode still works
+    print(f"[vision] disabled ({_vision_err}); pip install -r requirements.txt to enable /perceive")
+
+    def attach_visual_target(action, graph):  # type: ignore[no-redef]
+        return action
+
+    def visual_refs(graph):  # type: ignore[no-redef]
+        return set()
+# --- end visual perception ---
 
 
 LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
@@ -130,7 +151,7 @@ SYSTEM_PROMPT = (
 
 
 def _known_refs(graph: dict) -> set:
-    refs = set()
+    refs = set(visual_refs(graph))  # visual ids ("v3") from /perceive (SIH26171)
     for f in graph.get("inputs") or []:
         if f.get("ref"):
             refs.add(f["ref"])
@@ -599,7 +620,8 @@ def analyze(graph: ScreenGraph):
 
     graph_dict = enforce_ner_policy(graph_dict, "payload")  # feature/ner: tokenise or reject NAME/ADDRESS
 
-    return decide_action(graph_dict, model=graph.model)
+    # attach_visual_target is a no-op unless the extension sent visualElements.
+    return attach_visual_target(decide_action(graph_dict, model=graph.model), graph_dict)
 
 
 @app.post("/chat")

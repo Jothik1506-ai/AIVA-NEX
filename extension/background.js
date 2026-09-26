@@ -63,6 +63,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; // keep the message channel open for the async response
   }
 
+  // --- Visual perception (SIH26171): relay the ALREADY-MASKED screenshot to
+  // the local server only (see vision.js). ---
+  if (msg.type === "PERCEIVE") {
+    serverFetch("/perceive", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(msg.payload),
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        sendResponse(res.ok ? { ok: true, data } : { ok: false, error: data.detail || "Perception failed." });
+      })
+      .catch((err) => sendResponse({ ok: false, error: err.status === 401 ? err.message : "Could not reach server: " + err.message }));
+    return true;
+  }
+  // --- end visual perception ---
+
   if (msg.type === "PING_SERVER") {
     fetch(SERVER_URL + "/health")
       .then((res) => res.json())

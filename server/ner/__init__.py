@@ -7,7 +7,7 @@ Model: spaCy en_core_web_sm (CPU) + Indian name/address rule layer.
 Everything runs locally; no text is logged or sent anywhere.
 """
 
-from .api import enforce_ner_policy, ner_policy, router
+from .api import enforce_ner_policy, ner_policy, router, sanitize_texts
 from .detector import detect_batch, detect_names_addresses, detect_spans
 from .model import engine_name, get_nlp, warm_up_async
 from .tokenizer import Tokenizer, sanitize_payload, tokenize_text
@@ -25,6 +25,7 @@ __all__ = [
     "ner_policy",
     "router",
     "sanitize_payload",
+    "sanitize_texts",
     "tokenize_text",
     "warm_up_async",
 ]

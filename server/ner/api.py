@@ -21,12 +21,12 @@ Raw text is never logged - only counts and the engine name.
 import logging
 import os
 import time
-from typing import Any, List
+from typing import Any, Dict, List, Tuple
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from .detector import detect_spans
+from .detector import detect_batch, detect_spans
 from .model import engine_name
 from .tokenizer import Tokenizer, sanitize_payload
 
@@ -59,6 +59,42 @@ def enforce_ner_policy(payload: Any, what: str = "payload") -> Any:
                 ),
             )
     return clean
+
+
+def sanitize_texts(texts: List[str], what: str = "OCR text") -> Tuple[List[str], Dict[str, int]]:
+    """NAME/ADDRESS protection for text the SERVER produced (e.g. OCR output
+    from /perceive), where rejecting the request buys nothing - the pixels
+    already arrived. Returns (clean_texts, {"NAME": n, "ADDRESS": m}).
+
+      tokenize (default) - consistent NAME_n / ADDRESS_n tokens
+      reject             - irreversible [NAME] / [ADDRESS] masks (strict mode)
+      off                - unchanged
+    """
+    policy = ner_policy()
+    texts = list(texts or [])
+    if policy == "off" or not texts:
+        return texts, {}
+    tokenizer = Tokenizer(" ".join(texts))
+    counts: Dict[str, int] = {}
+    out: List[str] = []
+    for text, spans in zip(texts, detect_batch(texts)):
+        for sp in spans:
+            counts[sp.type] = counts.get(sp.type, 0) + 1
+        if not spans:
+            out.append(text)
+        elif policy == "reject":
+            buf, cursor = [], 0
+            for sp in sorted(spans, key=lambda s: s.start):
+                if sp.start < cursor:
+                    continue
+                buf.append(text[cursor:sp.start] + f"[{sp.type}]")
+                cursor = sp.end
+            out.append("".join(buf) + text[cursor:])
+        else:
+            out.append(tokenizer.apply(text, spans))
+    if counts:
+        log.info("NER %s: %s in %s", policy, counts, what)  # counts only, never text
+    return out, counts
 
 
 class ScanRequest(BaseModel):

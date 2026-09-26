@@ -33,6 +33,9 @@ log = logging.getLogger("aiva.security")
 TOKEN_HEADER = "X-Aiva-Token"
 TOKEN_FILE = Path(__file__).resolve().with_name(".aiva_token")
 DEFAULT_MAX_BODY_BYTES = 256 * 1024
+# /perceive carries one masked, downscaled (<=1280 px) JPEG as base64, which is
+# routinely larger than 256 KB, so it gets its own (still bounded) cap.
+DEFAULT_MAX_PERCEIVE_BYTES = 4 * 1024 * 1024
 # Paths reachable without the token. /health only says "ok"; the docs pages
 # describe the API but carry no data.
 OPEN_PATHS = frozenset({"/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"})
@@ -75,6 +78,13 @@ def max_body_bytes() -> int:
         return DEFAULT_MAX_BODY_BYTES
 
 
+def max_perceive_bytes() -> int:
+    try:
+        return max(1024, int(os.getenv("AIVA_MAX_PERCEIVE_BYTES", DEFAULT_MAX_PERCEIVE_BYTES)))
+    except ValueError:
+        return DEFAULT_MAX_PERCEIVE_BYTES
+
+
 async def _send_json(send, status: int, detail: str) -> None:
     body = json.dumps({"detail": detail}).encode("utf-8")
     await send(
@@ -112,18 +122,20 @@ class SharedTokenMiddleware:
 class BodySizeLimitMiddleware:
     """413 when the request body exceeds max_bytes (checks header and stream)."""
 
-    def __init__(self, app, max_bytes: int = DEFAULT_MAX_BODY_BYTES):
+    def __init__(self, app, max_bytes: int = DEFAULT_MAX_BODY_BYTES, path_limits: Optional[dict] = None):
         self.app = app
-        self.max_bytes = max_bytes
+        self.default_max = max_bytes
+        self.path_limits = dict(path_limits or {})
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        max_bytes = self.path_limits.get(scope.get("path"), self.default_max)
         for name, value in scope.get("headers") or []:
             if name == b"content-length":
                 try:
-                    if int(value) > self.max_bytes:
-                        return await _send_json(send, 413, f"Request body too large (limit {self.max_bytes} bytes).")
+                    if int(value) > max_bytes:
+                        return await _send_json(send, 413, f"Request body too large (limit {max_bytes} bytes).")
                 except ValueError:
                     return await _send_json(send, 400, "Invalid Content-Length header.")
         # Buffer the (small) body so a chunked request without Content-Length
@@ -135,8 +147,8 @@ class BodySizeLimitMiddleware:
                 return
             chunk = message.get("body", b"")
             total += len(chunk)
-            if total > self.max_bytes:
-                return await _send_json(send, 413, f"Request body too large (limit {self.max_bytes} bytes).")
+            if total > max_bytes:
+                return await _send_json(send, 413, f"Request body too large (limit {max_bytes} bytes).")
             chunks.append(chunk)
             more = message.get("more_body", False)
         body = b"".join(chunks)
@@ -166,7 +178,7 @@ def install_security(app: FastAPI, token: Optional[str] = None) -> str:
     # Starlette runs the LAST added middleware FIRST: CORS outermost (so 401/
     # 413 responses still carry CORS headers), then the body cap, then auth.
     app.add_middleware(SharedTokenMiddleware, token=token)
-    app.add_middleware(BodySizeLimitMiddleware, max_bytes=max_body_bytes())
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=max_body_bytes(), path_limits={"/perceive": max_perceive_bytes()})
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,

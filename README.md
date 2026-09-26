@@ -16,26 +16,60 @@ raw PII.
 **By default nothing leaves the machine.** The server only talks to an LLM on
 `localhost`; there is no cloud call and no telemetry unless you explicitly
 opt in (see [Privacy and network behaviour](#privacy-and-network-behaviour)).
+In optional Visual mode only a screenshot whose sensitive regions were
+blacked out on-device is sent, and only to the local server (see
+[Visual perception](#visual-perception-sih26171)).
 
-## Quick start (for reviewers)
+## Demo setup
 
-```bash
-# 1. Server - prints a shared token on start (also saved in server/.aiva_token)
-cd server && pip install -r requirements.txt && python main.py
+Everything runs on one Windows laptop, CPU only, no network after install.
 
-# 2. Demo page (separate terminal)
-cd demo && python -m http.server 5500
+**1. Server (one-time install, then start).**
+
+```powershell
+cd server
+py -3.11 -m venv .venv
+.venv\Scripts\pip install -r requirements-dev.txt   # runtime (FastAPI, spaCy + en_core_web_sm, RapidOCR, OpenCV) + test deps
+$env:AIVA_EXTENSION_ORIGIN = "chrome-extension://<your-extension-id>"   # from chrome://extensions
+.venv\Scripts\python main.py
 ```
-Then in Chrome/Brave/Edge: `chrome://extensions` → enable **Developer mode**
-→ **Load unpacked** → select the `extension/` folder → click the toolbar icon
-→ **⚙ Settings** → paste the server token → **Save & Test Connection** → open
-`http://localhost:5500/demo-form.html` → **Scan Page** → **Send to Server** →
-**Execute Action**. Full walkthrough in [Setup](#setup) below.
 
-Run all tests (from the repo root, no network needed):
+On first start the server creates a random shared token, prints it and saves
+it to `server/.aiva_token` (git-ignored). Every route except `/health`
+(`/analyze`, `/chat`, `/models`, `/ner/scan`, `/perceive`, ...) needs it in the
+`X-Aiva-Token` header, else `401`. `AIVA_EXTENSION_ORIGIN` locks CORS to the
+extension (`localhost` pages are always allowed for development). Bodies over
+256 KB get `413`, except `/perceive` (one masked screenshot), capped at 4 MB
+(`AIVA_MAX_BODY_BYTES` / `AIVA_MAX_PERCEIVE_BYTES`).
 
-```bash
-node --test "extension/tests/*.test.js" && cd server && python -m pytest -q
+**2. Demo page.** `cd demo; python -m http.server 5500`, then open
+`http://localhost:5500/demo-form.html`.
+
+**3. Extension.** `chrome://extensions` → **Developer mode** → **Load unpacked**
+→ `extension/` (or **Reload** if already loaded — the manifest changed). Copy
+the extension ID into `AIVA_EXTENSION_ORIGIN` above and restart the server.
+Open the side panel → **⚙ Settings** → paste the token from
+`server/.aiva_token` → **Save & Test Connection** ("Connected").
+
+**4. DOM flow.** **Scan Page** → **Send to Server** → **Execute Action**.
+
+**5. Visual mode (SIH26171).** **Scan Page** → click **👁 Visual** (turns
+purple) → **Send Context**. The panel shows the exact masked JPEG that left
+the browser (sensitive fields blacked out), the OCR/CV elements and timings;
+the chosen element is outlined in purple, **Execute** acts on it.
+
+**6. NER policy** (`AIVA_NER_POLICY`, set before starting the server):
+`tokenize` (default) turns free-text names/addresses into `NAME_n` /
+`ADDRESS_n` in `/analyze`, `/chat` and OCR text from `/perceive`; `reject`
+answers `400` for names/addresses in `/analyze`/`/chat` and masks them as
+`[NAME]` / `[ADDRESS]` in OCR text; `off` disables it. Demo Aadhaar test
+number (UIDAI sandbox, checksum-valid): `9999 4105 7058`.
+
+**7. Tests** (from the repo root, no network needed):
+
+```powershell
+node --test "extension/tests/*.test.js"
+cd server; .venv\Scripts\python -m pytest -q          # add -m "not slow" to skip OCR model tests
 ```
 
 ## Problem statement coverage
@@ -54,6 +88,8 @@ node --test "extension/tests/*.test.js" && cd server && python -m pytest -q
 | Action commands: click / focus / scroll / summarize | `server/main.py` → `decide_action_rules()`, `call_local_llm()`; executed in `extension/content.js` → `executeAction()` |
 | Demo page: scholarship/job form with all required fields | `demo/demo-form.html` |
 | **Beyond the brief:** a real local LLM decides actions when one is running (Ollama/LM Studio/etc.), with an automatic rule-based fallback so the demo can't break | `server/main.py` → `decide_action()` (see [Using a local model](#using-a-local-model)) |
+| **SIH26171:** on-device visual perception — masked screenshot → local OCR + CV → visual elements the agent can act on | `extension/vision.js`, `extension/vision-content.js`, `server/vision/`, `POST /perceive` (see [Visual perception](#visual-perception-sih26171)) |
+| On-device name/address detection (NER) in free text and OCR text | `extension/ner-rules.js`, `server/ner/` (see [Name & address detection](#name--address-detection-ner)) |
 | **Beyond the brief:** in-popup feedback to a real inbox - **off by default**, sent only after opting in under Settings | `extension/popup.html/js` → feedback section; `extension/background.js` → `SEND_FEEDBACK` |
 
 ---
@@ -102,15 +138,20 @@ privacy-browser-agent/
   extension/
     manifest.json     Manifest V3 config
     pii-checks.js      Pure PII detection + tokenisation (Verhoeff, Luhn, PAN), unit-tested
+    ner-rules.js       Client-side NAME/ADDRESS rules (hooked into pii-checks.js redactAllPII)
     content.js         DOM scanning, field classification, redaction, action execution
-    background.js      Service worker — relays the sanitized graph to the server (adds X-Aiva-Token)
+    background.js      Service worker — relays to the server via serverFetch() (adds X-Aiva-Token)
     popup.html/.css/.js  Side-panel UI
     settings.js        Settings panel: server token, feedback opt-in
+    vision.js          Visual mode: capture, on-device masking, /perceive, highlight
+    vision-content.js  Reports sensitive-field rects (no values), draws highlight
     tests/             node:test unit tests
   server/
-    main.py            FastAPI app: /health, /analyze, /chat, /models
+    main.py            FastAPI app: /health, /analyze, /chat, /models, /ner/scan, /perceive
     pii_checks.py      Same detection logic as pii-checks.js (Python)
-    security.py        CORS, shared token, body-size cap, safe 422 errors
+    security.py        CORS, shared token, body-size caps, safe 422 errors
+    ner/               spaCy en_core_web_sm + Indian rule layer (names/addresses)
+    vision/            OCR (RapidOCR/ONNX) + OpenCV detection + fusion + PII/NER re-check
     tests/             pytest suite
     requirements.txt, requirements-dev.txt
   demo/
@@ -122,10 +163,10 @@ privacy-browser-agent/
 
 - Chrome Extension, Manifest V3, plain JavaScript (no build step, no frameworks)
 - FastAPI + Pydantic, Python 3.11+
-- No heavy dependencies (no ML libraries in the server itself) — detection is
-  regex + DOM-label heuristics, and the "decision" step talks to a **local**
-  LLM over plain HTTP (stdlib `urllib`, no new pip package) and falls back to
-  a small rule-based engine if none is reachable — see
+- CPU-only ML on the server: spaCy `en_core_web_sm` (names/addresses) and
+  RapidOCR (ONNX) + OpenCV (Visual mode). The "decision" step talks to a
+  **local** LLM over plain HTTP (stdlib `urllib`) and falls back to a small
+  rule-based engine if none is reachable — see
   [Using a local model](#using-a-local-model).
 
 ---
@@ -308,6 +349,9 @@ Notes on what's deliberately **not** included:
   redaction ever has a bug, not the primary defense.
 
 - `POST /chat` → same PII check on the message and graph, then answers.
+- `POST /perceive` → masked screenshot in, visual elements out (see
+  [Visual perception](#visual-perception-sih26171)); `GET /perceive/health`.
+- `POST /ner/scan` → dev/debug NAME/ADDRESS spans + tokenised text.
 - All endpoints except `/health` need the `X-Aiva-Token` header (`401`
   otherwise). Oversized bodies get `413`, over-long fields `422` (the error
   never echoes the submitted text back).
@@ -326,13 +370,10 @@ logs contain only method, path and status.
 
 ## Running the tests
 
-```bash
-# Extension (Node 18+, no dependencies)
-node --test "extension/tests/*.test.js"
-
-# Server (one-time: python -m venv server/.venv && server/.venv/Scripts/pip install -r server/requirements-dev.txt)
-cd server && python -m pytest -q
-```
+See step 7 of [Demo setup](#demo-setup). The server suite covers privacy
+hardening (`test_api.py`, `test_pii_checks.py`), NER (`test_ner.py`), visual
+perception (`test_vision.py`) and the cross-feature checks (`test_integration.py`:
+token + body cap on `/perceive` and `/ner/scan`, NER over OCR text).
 
 ## Using a local model
 
@@ -493,6 +534,139 @@ All test names and addresses are invented.
 
 ---
 
+## Visual perception (SIH26171)
+
+Problem statement SIH26171 asks for *on-device visual perception for
+light-weight browser agents*. Besides reading the DOM, the agent can now
+**look at the rendered screen**: toggle **👁 Visual** in the side panel and
+the next **Send Context** runs a fully local vision step. This matters for
+canvas-drawn UIs, image buttons, shadow-DOM widgets and anything whose DOM
+does not say what the user actually sees.
+
+### How it works
+
+```
+side panel (vision.js)                      local server (server/vision/)
+ 1. ask page for sensitive-field rects  ──┐
+    (vision-content.js, rects only)       │
+ 2. chrome.tabs.captureVisibleTab         │
+ 3. OffscreenCanvas: downscale ≤1280px,   │
+    paint SOLID BLACK over every          │
+    sensitive rect  ── masked JPEG ──────►│ POST /perceive (127.0.0.1 only)
+                                          │  a. RapidOCR (ONNX, CPU) → text lines
+                                          │  b. OpenCV edges/contours → control boxes
+                                          │  c. PII regex re-check on every OCR string
+                                          │  d. fuse OCR + CV + sanitized DOM boxes →
+                                          │     [{id, text, bbox, type_guess, confidence}]
+ 4. elements shown in panel  ◄────────────┘     + short screen summary
+ 5. POST /analyze {graph + visualElements} → action may target a visual id;
+    response carries bbox → purple outline drawn on the chosen element
+```
+
+- **Model choice.** OCR is [RapidOCR](https://github.com/RapidAI/RapidOCR)
+  (PaddleOCR PP-OCR det+rec exported to ONNX, ~15 MB, runs on onnxruntime's
+  CPU provider — no GPU, no PyTorch). UI controls are found with classical
+  OpenCV (Canny edges + rectangle contours whose whole border is an edge),
+  which costs tens of milliseconds and needs no weights. A learned UI
+  detector (YOLO / OmniParser-style) would add hundreds of MB and seconds of
+  CPU time per frame for little gain on forms, so it was deliberately not
+  used. The DOM boxes the extension already has are fused in when available
+  (IoU match), giving each visual element a `domRef` the agent can act on.
+- **Element types:** `button`, `input`, `checkbox`, `link` (blue ink),
+  `heading`, `text`, and `masked_sensitive` (the black boxes). Inputs get a
+  `label` from the nearest text above/left of them.
+- **Acting on vision.** `/analyze` accepts an optional `visualElements`
+  list. The LLM may target a visual id (`"v7"`), which is mapped to its DOM
+  ref; if the DOM rule engine finds nothing it falls back to a visual rule
+  (primary button → click, else first input → focus). Actions come back with
+  `targetVisualId` + `bbox` (CSS px); a visual-only target with no DOM node
+  is executed at the bbox centre (`document.elementFromPoint`).
+
+### Privacy masking (before anything leaves the browser)
+
+1. `vision-content.js` returns only **rectangles** (never text/values) of:
+   fields `content.js` flagged as sensitive, its redaction overlays, and any
+   `password` / `cc-*` / `one-time-code` input even if the scan missed it.
+2. The side panel draws **opaque black boxes (4 px padding)** over those
+   rects on an `OffscreenCanvas` and only then encodes the JPEG. The card in
+   the panel shows the exact masked image that was sent.
+3. If the page can't report rects (e.g. `chrome://` pages, content script
+   missing) **no screenshot is taken or sent**.
+4. The image goes only to `127.0.0.1:8000/perceive`, is processed in memory,
+   and is never written to disk or returned. Every OCR string is re-checked
+   with the same candidate patterns as `server/pii_checks.py` and matches are
+   replaced by `[EMAIL]`, `[PHONE]`, … (`piiMaskedServerSide`), then names and
+   addresses go through the NER detector and become `NAME_n` / `ADDRESS_n`
+   (or `[NAME]` / `[ADDRESS]` with `AIVA_NER_POLICY=reject`) before any model
+   sees them (`nerMaskedServerSide`). `/perceive` needs the shared token like
+   every other route.
+
+### Latency (CPU only)
+
+Measured on the target laptop — AMD Ryzen 7 7730U, 15 GB RAM, no GPU,
+Python 3.11, onnxruntime CPU — 1280×800 screenshot:
+
+| Screen (1280×800 JPEG q90) | OCR lines | Elements | `/perceive` total, warm | first request after startup |
+|---|---|---|---|---|
+| Synthetic form (tests) | 7 | 8 | **~0.42 s** | — |
+| `demo-form.html` scholarship form | ~20 | 23 | **~0.75–0.85 s** | ~0.85–0.95 s |
+| `demo-form.html` product page | ~15 | 17 | **~0.77–0.86 s** | ~0.95 s |
+| Wikipedia article (text-dense) | 80 | 93 | **~2.0–2.2 s** | ~2.2–2.3 s |
+
+OCR is >95% of the time (OpenCV detection 10–45 ms, fusion <35 ms). Typical
+forms/app screens are well under the 2 s target; very text-dense pages sit
+right at it, because recognition cost grows with the number of text lines.
+The server loads and warms the OCR models in a background thread at startup
+(~4–5 s, once), so the user's first request is not a cold start. Two tuning
+choices, both measured: recogniser batch size 1 (batching pads every line to
+the widest one: 2.6 s → 1.45 s recognition on the dense page) and rounding
+recogniser input widths up to 160 px buckets (onnxruntime pays a one-off cost
+per new input shape: first sight of the dense page 5.4 s → 2.2 s).
+
+Reproduce: `cd server; .venv\Scripts\python -m vision.bench [screenshot.png]`.
+
+### One-time setup
+
+```powershell
+cd server
+py -3.11 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+```
+
+The RapidOCR ONNX models ship inside the `rapidocr-onnxruntime` wheel, so
+this pip install is the only download; after it everything runs offline.
+Check with `GET http://127.0.0.1:8000/perceive/health` →
+`{"available": true, ...}`.
+
+### Demo steps
+
+1. `cd server; .venv\Scripts\python main.py` and serve the demo page
+   (`cd demo; python -m http.server 5500`).
+2. Reload the unpacked extension (manifest now also loads `vision-content.js`),
+   open `http://localhost:5500/demo-form.html`, type a fake email/phone into
+   the form, open the side panel.
+3. **Scan Page** → click **👁 Visual** (turns purple) → **Send Context**.
+4. The panel shows the masked screenshot that was sent (sensitive fields are
+   black boxes), the screen summary, element list and OCR/CV timings.
+5. The returned action names its visual target; the element is outlined in
+   purple on the page. **Execute** performs it.
+
+### Tests
+
+```powershell
+cd server
+.venv\Scripts\python -m pytest            # all, incl. OCR tests
+.venv\Scripts\python -m pytest -m "not slow"   # skip model-loading tests
+```
+
+`tests/test_vision.py` draws a synthetic form with PIL and checks that OCR
+finds the expected labels, buttons/inputs are classified with correct boxes,
+extension-style black masks hide content and are recognised, OCR text with
+PII is masked server-side, `/perceive` fuses DOM refs at devicePixelRatio 2,
+and `/analyze` picks an action by visual element id.
+
+---
+
 ## Limitations
 
 Being upfront about what this prototype does and doesn't do:
@@ -514,6 +688,11 @@ Being upfront about what this prototype does and doesn't do:
 - **Redaction overlays reposition on scroll/resize but are a visual aid**,
   not a security boundary — the actual privacy guarantee is that raw values
   never enter the JSON that gets sent, independent of what's drawn on screen.
+- **Visual perception is heuristic.** OCR + edge-based boxes work well on
+  ordinary forms and pages; borderless/ghost buttons, icons without text and
+  very dense UIs are guessed less reliably (lower `confidence`). A scroll in
+  the few ms between reading mask rects and capturing could misalign masks;
+  the capture is taken immediately after the rects are read.
 - The shared token stops other web pages and local apps from driving the
   server, but it is a single static secret, not per-user auth. The server
   binds to `127.0.0.1` only and is not meant to be exposed further.
