@@ -1,5 +1,11 @@
 # Aiva Nex Agent — Privacy-Preserving Browser Agent
 
+> **Start here: [NEXAIVA/Intro.md](NEXAIVA/Intro.md)** — low-token overview
+> and routing to [Details](NEXAIVA/Details.md), [Vault](NEXAIVA/Vault.md)
+> (secrets, names only) and the [Setup Guide](NEXAIVA/SETUP_GUIDE.md).
+> One-command install: `.\setup.ps1 -Dev`, then verify with
+> `py -3.11 scripts\verify_setup.py`.
+
 A Chrome extension + local server prototype (built for SIH) that demonstrates
 a browser AI agent which understands a page, **redacts sensitive data
 entirely on-device**, and only ever sends anonymized context to a server
