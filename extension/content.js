@@ -8,21 +8,20 @@
 (() => {
   const REF_ATTR = "data-pa-ref";
   const OVERLAY_CLASS = "pa-redaction-overlay";
+  // [privacy-hardening] The server caps request bodies (256 KB by default),
+  // so very link-heavy pages only send the first N buttons/links.
+  const MAX_BUTTONS = 300;
+  const MAX_LINKS = 300;
 
   // ---------------------------------------------------------------------
   // 1. Local detection patterns
   // ---------------------------------------------------------------------
 
-  // Checked in this order (most specific / longest first) so a 16-digit card
-  // number can never be mistaken for a 12-digit Aadhaar, etc. Word boundaries
-  // (\b) keep these from matching partway through a longer digit run.
-  const PATTERNS = {
-    CARD: /\b(?:\d[ -]?){13,19}\b/,
-    AADHAAR: /\b\d{4}\s?\d{4}\s?\d{4}\b/,
-    PAN: /\b[A-Za-z]{5}[0-9]{4}[A-Za-z]\b/,
-    PHONE: /(?:\+?91[\s-]?)?[6-9]\d{9}\b/,
-    EMAIL: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/,
-  };
+  // [privacy-hardening] Value-level detection (EMAIL, CARD+Luhn,
+  // AADHAAR+Verhoeff, strict PAN, PHONE) and tokenisation live in the pure
+  // module extension/pii-checks.js (loaded first via manifest.json) so the
+  // exact same code is unit-tested under Node. See that file for the policy.
+  const { redactAllPII, numberedToken } = globalThis.AivaPII;
 
   // Label/name/placeholder hints used to classify a *structured* form field
   // before ever looking at its value. This is far more reliable than regex
@@ -94,94 +93,15 @@
     return null;
   }
 
-  // Fallback for free text (e.g. a "comments" box) that has no useful label:
-  // scan the actual value for PII shapes. Kept for reference/tests - the
-  // real work now happens in redactAllPII below, which (unlike this) finds
-  // every PII span in the text, not just the first one.
-  function scanValueForPII(text) {
-    if (!text) return null;
-    if (PATTERNS.CARD.test(text) && text.replace(/\D/g, "").length >= 13) return "CARD";
-    if (PATTERNS.AADHAAR.test(text) && text.replace(/\D/g, "").length === 12) return "ID_NUMBER";
-    if (PATTERNS.PAN.test(text)) return "ID_NUMBER";
-    if (PATTERNS.PHONE.test(text)) return "PHONE";
-    if (PATTERNS.EMAIL.test(text)) return "EMAIL";
-    return null;
-  }
-
   // ---------------------------------------------------------------------
-  // 2. Tokenization
+  // 2. Tokenization (numberedToken / redactAllPII come from pii-checks.js)
   // ---------------------------------------------------------------------
-
-  // PERSON_1, EMAIL_1, PHONE_1, ID_NUMBER_1, CARD_1, ADDRESS_1 - incrementing
-  // per type so multiple instances on one page stay distinguishable.
-  function numberedToken(type, counters) {
-    counters[type] = (counters[type] || 0) + 1;
-    return `${type}_${counters[type]}`;
-  }
 
   // PASSWORD_FIELD / OTP_FIELD / HIDDEN_FIELD - fixed literal tokens; only
   // gets a numeric suffix from the 2nd occurrence onward.
   function literalToken(base, counters) {
     counters[base] = (counters[base] || 0) + 1;
     return counters[base] === 1 ? base : `${base}_${counters[base]}`;
-  }
-
-  // Finds and replaces EVERY PII span in a free-text value, not just the
-  // first match - a single "comments" field can easily contain both an
-  // email and a phone number in one sentence, and both must be redacted,
-  // not just whichever pattern happens to be checked first.
-  //
-  // Patterns are tried most-specific-first (CARD, then AADHAAR, then PAN,
-  // then PHONE, then EMAIL) and a match is only accepted if it doesn't
-  // overlap a span a higher-priority pattern already claimed - this is what
-  // stops a 16-digit card number from also being read as a 12-digit
-  // Aadhaar number for part of itself.
-  function redactAllPII(text, counters) {
-    if (!text) return { redactedText: text, categoriesFound: {} };
-
-    const order = ["CARD", "AADHAAR", "PAN", "PHONE", "EMAIL"];
-    const claimed = [];
-    const matches = [];
-
-    for (const type of order) {
-      const re = new RegExp(PATTERNS[type].source, "g");
-      let m;
-      while ((m = re.exec(text)) !== null) {
-        const start = m.index;
-        let end = start + m[0].length;
-        // CARD's pattern repeats "digit + optional separator", so its last
-        // repetition can greedily swallow a trailing space/dash that isn't
-        // actually part of the number (e.g. the space before the next
-        // word). Trim it back off the match so reconstructed text doesn't
-        // lose that space.
-        while (end > start && / |-/.test(text[end - 1])) end--;
-        const digits = text.slice(start, end).replace(/\D/g, "").length;
-        if (type === "CARD" && digits < 13) continue;
-        if (type === "AADHAAR" && digits !== 12) continue;
-        const overlaps = claimed.some(([cs, ce]) => start < ce && end > cs);
-        if (!overlaps) {
-          claimed.push([start, end]);
-          matches.push({ start, end, type: type === "AADHAAR" || type === "PAN" ? "ID_NUMBER" : type });
-        }
-        if (m[0].length === 0) re.lastIndex++; // guard against zero-length matches
-      }
-    }
-
-    if (matches.length === 0) return { redactedText: text, categoriesFound: {} };
-
-    matches.sort((a, b) => a.start - b.start);
-    const categoriesFound = {};
-    let redactedText = "";
-    let cursor = 0;
-    for (const { start, end, type } of matches) {
-      redactedText += text.slice(cursor, start);
-      redactedText += numberedToken(type, counters);
-      categoriesFound[type] = (categoriesFound[type] || 0) + 1;
-      cursor = end;
-    }
-    redactedText += text.slice(cursor);
-
-    return { redactedText, categoriesFound };
   }
 
   function truncate(str, max) {
@@ -367,6 +287,7 @@
     const detectedTypes = {};
     let sensitiveCount = 0;
     document.querySelectorAll('button, input[type="submit"], input[type="button"]').forEach((el, i) => {
+      if (i >= MAX_BUTTONS) return; // [privacy-hardening] payload size cap
       const ref = `button-${i}`;
       el.setAttribute(REF_ATTR, ref);
       const rawText = (el.textContent || el.value || "").trim();
@@ -387,6 +308,7 @@
     const detectedTypes = {};
     let sensitiveCount = 0;
     document.querySelectorAll("a[href]").forEach((el, i) => {
+      if (i >= MAX_LINKS) return; // [privacy-hardening] payload size cap
       const ref = `link-${i}`;
       el.setAttribute(REF_ATTR, ref);
       let hrefDomain = "";
