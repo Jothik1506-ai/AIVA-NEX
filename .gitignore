@@ -16,5 +16,14 @@ Thumbs.db
 *.zip
 
 # Local server secrets / test caches (privacy-hardening)
+# See NEXAIVA/Vault.md - these hold real secret values and must never be committed.
 server/.aiva_token
+**/.aiva_token
+.env
+.env*
+**/.env
+**/.env*
+!.env.example
+*.local.ps1
+*.local.json
 .pytest_cache/
