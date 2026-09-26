@@ -1,3 +1,7 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pydantic>=2.6
+# On-device NER for names/addresses (server/ner/). The model wheel (~12 MB) is
+# a one-time download; the server falls back to rules-only if it is missing.
+spacy>=3.7,<3.9
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
