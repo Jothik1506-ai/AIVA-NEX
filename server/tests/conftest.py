@@ -16,6 +16,7 @@ os.environ["AIVA_EXTENSION_ORIGIN"] = TEST_ORIGIN
 os.environ["AIVA_ALLOW_CLOUD"] = "0"
 os.environ.pop("GEMINI_API_KEY", None)
 os.environ["LOCAL_LLM_BASE_URL"] = "http://127.0.0.1:9/v1"  # discard port: always unreachable
+os.environ.setdefault("AIVA_NER_WARM", "0")  # tests load the NER model synchronously on first use
 
 
 @pytest.fixture()

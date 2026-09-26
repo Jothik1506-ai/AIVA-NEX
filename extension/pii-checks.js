@@ -146,7 +146,21 @@
   function redactAllPII(text, counters) {
     counters = counters || {};
     if (!text) return { redactedText: text, categoriesFound: {} };
-    const matches = detectPII(text);
+    let matches = detectPII(text);
+
+    // --- feature/ner: client-side NAME/ADDRESS rule pass (ner-rules.js) ---
+    // A name/address span wins over any regex match it overlaps (the whole
+    // span is redacted, which is strictly more redaction, never less).
+    // ner-rules.js is loaded before content.js and sets root.AivaNerRules.
+    if (root.AivaNerRules) {
+      for (const s of root.AivaNerRules.detect(text)) {
+        matches = matches.filter((m) => !(s.start < m.end && s.end > m.start));
+        matches.push({ start: s.start, end: s.end, type: s.type });
+      }
+      matches.sort((a, b) => a.start - b.start);
+    }
+    // --- end feature/ner ---
+
     if (matches.length === 0) return { redactedText: text, categoriesFound: {} };
     const categoriesFound = {};
     let redactedText = "";
