@@ -1,3 +1,11 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pydantic>=2.6
+# Visual perception (SIH26171) - CPU-only, models bundled in the wheel
+rapidocr-onnxruntime>=1.3
+opencv-python-headless>=4.8
+numpy>=1.24
+# Tests
+pillow>=10.0
+pytest>=8.0
+httpx>=0.27
