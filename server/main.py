@@ -27,6 +27,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- feature/ner: on-device NAME/ADDRESS detection (see server/ner/) --------
+from ner import enforce_ner_policy, router as ner_router, warm_up_async  # noqa: E402
+
+app.include_router(ner_router)  # POST /ner/scan (dev/debug)
+warm_up_async()  # load the spaCy model once, in the background
+# --- end feature/ner --------------------------------------------------------
+
 
 class ScreenGraph(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -551,6 +558,8 @@ def analyze(graph: ScreenGraph):
             ),
         )
 
+    graph_dict = enforce_ner_policy(graph_dict, "payload")  # feature/ner: tokenise or reject NAME/ADDRESS
+
     return decide_action(graph_dict, model=graph.model)
 
 
@@ -569,7 +578,8 @@ def chat(req: ChatRequest):
             ),
         )
 
-    return decide_chat_response(req.message, graph_dict, model=req.model)
+    clean = enforce_ner_policy({"message": req.message, "graph": graph_dict}, "chat request")  # feature/ner
+    return decide_chat_response(clean["message"], clean["graph"], model=req.model)
 
 
 if __name__ == "__main__":
