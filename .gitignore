@@ -14,3 +14,7 @@ Thumbs.db
 
 # Packaged distribution artifacts (regenerate with the zip command in README)
 *.zip
+
+# Local server secrets / test caches (privacy-hardening)
+server/.aiva_token
+.pytest_cache/

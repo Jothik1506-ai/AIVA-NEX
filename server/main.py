@@ -7,65 +7,67 @@ the payload text for PII-shaped substrings as a defense-in-depth backstop.
 """
 
 import json
+import logging
 import os
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+# --- [privacy-hardening] begin -------------------------------------------
+from pii_checks import find_validated_pii_types
+from security import install_security
+
+log = logging.getLogger("aiva")
 
 app = FastAPI(title="Aiva Nex Agent Server", version="0.1.0")
+# CORS locked to the extension origin + localhost, X-Aiva-Token required on
+# everything but /health, 256 KB body cap. See server/security.py.
+SHARED_TOKEN = install_security(app)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Field/list size limits. The body cap (security.py) bounds everything else.
+ShortStr = Annotated[str, Field(max_length=500)]
+SnippetStr = Annotated[str, Field(max_length=1000)]
+MAX_ITEMS = 1000
 
 
 class ScreenGraph(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    pageTitle: Optional[str] = None
-    domain: Optional[str] = None
-    scannedAt: Optional[str] = None
-    headings: Optional[List[str]] = None
-    textSnippets: Optional[List[str]] = None
-    forms: Optional[List[Dict[str, Any]]] = None
-    inputs: Optional[List[Dict[str, Any]]] = None
-    buttons: Optional[List[Dict[str, Any]]] = None
-    links: Optional[List[Dict[str, Any]]] = None
-    sensitiveItemsCount: Optional[int] = 0
+    pageTitle: Optional[str] = Field(default=None, max_length=500)
+    domain: Optional[str] = Field(default=None, max_length=253)
+    scannedAt: Optional[str] = Field(default=None, max_length=64)
+    headings: Optional[List[ShortStr]] = Field(default=None, max_length=100)
+    textSnippets: Optional[List[SnippetStr]] = Field(default=None, max_length=200)
+    forms: Optional[List[Dict[str, Any]]] = Field(default=None, max_length=MAX_ITEMS)
+    inputs: Optional[List[Dict[str, Any]]] = Field(default=None, max_length=MAX_ITEMS)
+    buttons: Optional[List[Dict[str, Any]]] = Field(default=None, max_length=MAX_ITEMS)
+    links: Optional[List[Dict[str, Any]]] = Field(default=None, max_length=MAX_ITEMS)
+    sensitiveItemsCount: Optional[int] = Field(default=0, ge=0, le=100000)
     detectedTypes: Optional[Dict[str, int]] = None
-    model: Optional[str] = None
+    model: Optional[str] = Field(default=None, max_length=200)
 
 
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    message: str
+    message: str = Field(min_length=1, max_length=4000)
     graph: Optional[Dict[str, Any]] = None
-    model: Optional[str] = None
-    history: Optional[List[Dict[str, Any]]] = None
-
-
-RAW_PII_PATTERNS = {
-    "email": re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
-    "phone": re.compile(r"(?:\+?91[\s-]?)?[6-9]\d{9}\b"),
-    "aadhaar": re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b"),
-    "pan": re.compile(r"\b[A-Za-z]{5}[0-9]{4}[A-Za-z]\b"),
-    "card": re.compile(r"\b(?:\d[ -]?){13,19}\b"),
-}
+    model: Optional[str] = Field(default=None, max_length=200)
+    history: Optional[List[Dict[str, Any]]] = Field(default=None, max_length=50)
 
 
 def find_raw_pii(graph_dict: dict) -> List[str]:
-    text = json.dumps(graph_dict)
-    return [name for name, pattern in RAW_PII_PATTERNS.items() if pattern.search(text)]
+    """Types of VALIDATED raw PII left in the payload (-> HTTP 400).
+
+    Unvalidated look-alikes (a 12-digit number failing Verhoeff, a 16-digit
+    reference failing Luhn) are not rejected; see server/pii_checks.py.
+    """
+    return find_validated_pii_types(graph_dict)
 
 
 LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
@@ -73,10 +75,39 @@ LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "llama3.2:1b")
 LOCAL_LLM_TIMEOUT_SECONDS = 20
 CHAT_LLM_TIMEOUT_SECONDS = 15
 
-# Gemini API (free) as cloud LLM fallback - set GEMINI_API_KEY env var to enable
+# Off-device calls are OFF unless AIVA_ALLOW_CLOUD=1. That flag gates both the
+# Gemini fallback and a LOCAL_LLM_BASE_URL pointing at a non-loopback host.
+ALLOW_CLOUD = os.getenv("AIVA_ALLOW_CLOUD", "0").strip().lower() in ("1", "true", "yes")
+
+
+def _is_loopback_url(url: str) -> bool:
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return host in ("localhost", "127.0.0.1", "::1") or host.startswith("127.")
+
+
+def _local_llm_allowed() -> bool:
+    if _is_loopback_url(LOCAL_LLM_BASE_URL) or ALLOW_CLOUD:
+        return True
+    log.warning("LOCAL_LLM_BASE_URL is not a loopback address; refusing to send page context there without AIVA_ALLOW_CLOUD=1.")
+    return False
+
+
+# Optional Gemini cloud fallback - needs BOTH AIVA_ALLOW_CLOUD=1 and
+# GEMINI_API_KEY. Sends sanitized page context to Google when used.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-1.5-flash"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+if ALLOW_CLOUD:
+    log.warning(
+        "!!! AIVA_ALLOW_CLOUD=1: sanitized page context MAY be sent off-device "
+        "(Gemini %s%s). The 'fully local' guarantee does NOT hold in this mode. !!!",
+        GEMINI_MODEL,
+        "" if GEMINI_API_KEY else ", but GEMINI_API_KEY is not set so it stays unused",
+    )
+elif GEMINI_API_KEY:
+    log.warning("GEMINI_API_KEY is set but ignored: cloud fallback is off (set AIVA_ALLOW_CLOUD=1 to opt in).")
+# --- [privacy-hardening] end ---------------------------------------------
 
 ALLOWED_ACTIONS = {"click", "focus", "scroll", "summarize"}
 
@@ -134,6 +165,8 @@ def _parse_model_action(raw_text: str, known_refs: set) -> Optional[dict]:
 
 
 def call_local_llm(graph: dict, model: Optional[str] = None) -> Optional[dict]:
+    if not _local_llm_allowed():  # [privacy-hardening]
+        return None
     model = model or LOCAL_LLM_MODEL
     body = json.dumps(
         {
@@ -197,10 +230,11 @@ def _build_page_context(graph_dict: Dict[str, Any]) -> str:
 
 
 def call_gemini_chat(query: str, graph_dict: Dict[str, Any]) -> Optional[str]:
-    """Call Gemini API (free tier) as cloud LLM fallback.
+    """Optional Gemini cloud fallback - OFF by default.
 
-    This is the one call in this file that leaves the machine - a real
-    external network call to Google, unlike the local-LLM path. Per plan
+    Runs only when AIVA_ALLOW_CLOUD=1 AND GEMINI_API_KEY are both set
+    ([privacy-hardening]). This is the one call in this file that leaves the
+    machine - a real external network call to Google. Per plan
     §9.3, memory-derived context must never reach this function. It doesn't
     today only because nothing upstream threads memory into `query` or
     `graph_dict` - see the invariant documented on _build_page_context()
@@ -208,8 +242,9 @@ def call_gemini_chat(query: str, graph_dict: Dict[str, Any]) -> Optional[str]:
     function itself. Do not "simplify" _build_page_context() into a raw
     dump of graph_dict without re-reading that comment.
     """
-    if not GEMINI_API_KEY:
+    if not (ALLOW_CLOUD and GEMINI_API_KEY):  # [privacy-hardening] opt-in only
         return None
+    log.warning("Cloud fallback in use: sending sanitized page context to Google Gemini (%s).", GEMINI_MODEL)
 
     system_prompt = (
         "You are Aiva Nex Agent, an intelligent, privacy-preserving AI browser assistant. "
@@ -228,8 +263,10 @@ def call_gemini_chat(query: str, graph_dict: Dict[str, Any]) -> Optional[str]:
         "generationConfig": {"temperature": 0.7, "maxOutputTokens": 300}
     }).encode("utf-8")
 
-    url = GEMINI_API_URL.format(model=GEMINI_MODEL, key=GEMINI_API_KEY)
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    url = GEMINI_API_URL.format(model=GEMINI_MODEL)
+    # Key in a header, not the URL, so it never lands in proxy/access logs.
+    headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
@@ -239,7 +276,9 @@ def call_gemini_chat(query: str, graph_dict: Dict[str, Any]) -> Optional[str]:
 
 
 def call_local_llm_chat(query: str, graph_dict: Dict[str, Any], model: Optional[str] = None) -> Optional[str]:
-    """Answers user queries using local Ollama LLM, with Gemini API as fallback."""
+    """Answers user queries using the local LLM; Gemini fallback only if opted in."""
+    if not _local_llm_allowed():  # [privacy-hardening]
+        return call_gemini_chat(query, graph_dict)
     model = model or LOCAL_LLM_MODEL
 
     system_prompt = (
@@ -280,7 +319,7 @@ def call_local_llm_chat(query: str, graph_dict: Dict[str, Any], model: Optional[
     except Exception:
         pass
 
-    # Fallback to Gemini API if Ollama unavailable
+    # Gemini fallback - returns None unless AIVA_ALLOW_CLOUD=1 (default off)
     return call_gemini_chat(query, graph_dict)
 
 
@@ -575,4 +614,7 @@ def chat(req: ChatRequest):
 if __name__ == "__main__":
     import uvicorn
 
+    # [privacy-hardening] Show the token once so it can be pasted into the
+    # extension's Settings panel (local console only, never logged).
+    print(f"Aiva shared token (paste into extension Settings): {SHARED_TOKEN}")
     uvicorn.run(app, host="127.0.0.1", port=8000)
