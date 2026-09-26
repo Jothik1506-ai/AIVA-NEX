@@ -167,6 +167,18 @@
       }
     }
 
+    // --- feature/ner: client-side NAME/ADDRESS rule pass (ner-rules.js) ---
+    // A name/address span wins over any regex match it overlaps (the whole
+    // span is redacted, which is strictly more redaction, never less).
+    if (globalThis.AivaNerRules) {
+      for (const s of globalThis.AivaNerRules.detect(text)) {
+        const kept = matches.filter((m) => !(s.start < m.end && s.end > m.start));
+        matches.length = 0;
+        matches.push(...kept, { start: s.start, end: s.end, type: s.type });
+      }
+    }
+    // --- end feature/ner ---
+
     if (matches.length === 0) return { redactedText: text, categoriesFound: {} };
 
     matches.sort((a, b) => a.start - b.start);
