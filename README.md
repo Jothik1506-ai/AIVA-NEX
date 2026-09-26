@@ -10,22 +10,33 @@ before executing a returned action back in the browser.
 **No raw screenshot and no raw PII value ever leaves the browser.** Detection,
 classification, and tokenization all happen in the content script, before the
 popup or the server ever sees the data. The server independently re-checks
-every incoming payload for PII shapes and rejects anything that looks raw.
+every incoming payload and rejects anything that still contains validated
+raw PII.
+
+**By default nothing leaves the machine.** The server only talks to an LLM on
+`localhost`; there is no cloud call and no telemetry unless you explicitly
+opt in (see [Privacy and network behaviour](#privacy-and-network-behaviour)).
 
 ## Quick start (for reviewers)
 
 ```bash
-# 1. Server
+# 1. Server - prints a shared token on start (also saved in server/.aiva_token)
 cd server && pip install -r requirements.txt && python main.py
 
 # 2. Demo page (separate terminal)
 cd demo && python -m http.server 5500
 ```
 Then in Chrome/Brave/Edge: `chrome://extensions` → enable **Developer mode**
-→ **Load unpacked** → select the `extension/` folder → open
-`http://localhost:5500/demo-form.html` → click the toolbar icon → **Scan
-Page** → **Send to Server** → **Execute Action**. Full walkthrough with
-screenshots-worth of detail in [Setup](#setup) below.
+→ **Load unpacked** → select the `extension/` folder → click the toolbar icon
+→ **⚙ Settings** → paste the server token → **Save & Test Connection** → open
+`http://localhost:5500/demo-form.html` → **Scan Page** → **Send to Server** →
+**Execute Action**. Full walkthrough in [Setup](#setup) below.
+
+Run all tests (from the repo root, no network needed):
+
+```bash
+node --test "extension/tests/*.test.js" && cd server && python -m pytest -q
+```
 
 ## Problem statement coverage
 
@@ -33,16 +44,17 @@ screenshots-worth of detail in [Setup](#setup) below.
 |---|---|
 | Manifest V3 Chrome extension | `extension/manifest.json` |
 | Content script scans the DOM | `extension/content.js` → `collectFields()`, `collectButtons()`, `collectLinks()` |
-| Local detection: passwords, email, phone, Aadhaar-like, PAN-like, card-like, names, addresses, OTP, hidden inputs | `extension/content.js` → `PATTERNS`, `LABEL_HINTS`, `analyzeField()` (see [What gets detected](#what-gets-detected-and-tokenized)) |
-| Tokenization before send (`PERSON_1`, `EMAIL_1`, `PASSWORD_FIELD`, ...) | `extension/content.js` → `numberedToken()` / `literalToken()` / `redactAllPII()` |
+| Local detection: passwords, email, phone, Aadhaar (Verhoeff), PAN (strict format), cards (Luhn), names, addresses, OTP, hidden inputs | `extension/pii-checks.js` → `detectPII()`; `extension/content.js` → `LABEL_HINTS`, `analyzeField()` (see [What gets detected](#what-gets-detected-and-tokenized)) |
+| Tokenization before send (`PERSON_1`, `EMAIL_1`, `PASSWORD_FIELD`, ...) | `extension/pii-checks.js` → `redactAllPII()`; `extension/content.js` → `literalToken()` |
 | Anonymized "screen graph" JSON (title, domain-only, forms, labels, types, sanitized values, buttons, links, approx. positions) | `extension/content.js` → `buildScreenGraph()` (see [The screen graph sent to the server](#the-screen-graph-sent-to-the-server)) |
 | Popup UI: scan / count / JSON preview / send / action / execute | `extension/popup.html`, `popup.js` |
 | Visual redaction overlay on sensitive fields | `extension/content.js` → `applyRedactionOverlay()` |
-| FastAPI `POST /analyze`, validates no raw PII, returns an action | `server/main.py` → `find_raw_pii()`, `/analyze` |
+| FastAPI `POST /analyze`, validates no raw PII, returns an action | `server/main.py` → `find_raw_pii()`, `/analyze`; checks in `server/pii_checks.py` |
+| Local server hardening: CORS locked to the extension, shared-token auth, 256 KB body cap, field limits | `server/security.py`; token entry in `extension/settings.js` |
 | Action commands: click / focus / scroll / summarize | `server/main.py` → `decide_action_rules()`, `call_local_llm()`; executed in `extension/content.js` → `executeAction()` |
 | Demo page: scholarship/job form with all required fields | `demo/demo-form.html` |
 | **Beyond the brief:** a real local LLM decides actions when one is running (Ollama/LM Studio/etc.), with an automatic rule-based fallback so the demo can't break | `server/main.py` → `decide_action()` (see [Using a local model](#using-a-local-model)) |
-| **Beyond the brief:** in-popup feedback, routed to a real feedback inbox | `extension/popup.html/js` → feedback section; `extension/background.js` → `SEND_FEEDBACK` |
+| **Beyond the brief:** in-popup feedback to a real inbox - **off by default**, sent only after opting in under Settings | `extension/popup.html/js` → feedback section; `extension/background.js` → `SEND_FEEDBACK` |
 
 ---
 
@@ -89,12 +101,18 @@ screenshots-worth of detail in [Setup](#setup) below.
 privacy-browser-agent/
   extension/
     manifest.json     Manifest V3 config
-    content.js         DOM scanning, detection, tokenization, redaction, action execution
-    background.js      Service worker — relays the sanitized graph to the server
-    popup.html/.css/.js  Popup UI
+    pii-checks.js      Pure PII detection + tokenisation (Verhoeff, Luhn, PAN), unit-tested
+    content.js         DOM scanning, field classification, redaction, action execution
+    background.js      Service worker — relays the sanitized graph to the server (adds X-Aiva-Token)
+    popup.html/.css/.js  Side-panel UI
+    settings.js        Settings panel: server token, feedback opt-in
+    tests/             node:test unit tests
   server/
-    main.py            FastAPI app: /health, /analyze
-    requirements.txt
+    main.py            FastAPI app: /health, /analyze, /chat, /models
+    pii_checks.py      Same detection logic as pii-checks.js (Python)
+    security.py        CORS, shared token, body-size cap, safe 422 errors
+    tests/             pytest suite
+    requirements.txt, requirements-dev.txt
   demo/
     demo-form.html      Sample scholarship/job application form for the demo
   README.md
@@ -129,6 +147,22 @@ curl http://127.0.0.1:8000/health
 # {"status":"ok"}
 ```
 
+On first start the server creates a random shared token in
+`server/.aiva_token` (git-ignored) and prints it. Every endpoint except
+`/health` (and the `/docs` pages) requires it in the `X-Aiva-Token` header,
+otherwise it answers `401`. To use a fixed token instead, set
+`AIVA_SHARED_TOKEN` before starting. For the demo, also set the extension's
+origin so CORS only admits it (the ID is shown on `chrome://extensions`):
+
+```powershell
+$env:AIVA_EXTENSION_ORIGIN = "chrome-extension://<your-extension-id>"
+python main.py
+```
+
+`http://localhost:*` / `http://127.0.0.1:*` are always allowed for
+development; nothing else is. Request bodies over 256 KB get `413`
+(`AIVA_MAX_BODY_BYTES` to change).
+
 Interactive API docs (Swagger UI) are available at
 `http://127.0.0.1:8000/docs` if you want to inspect `/analyze` directly.
 
@@ -138,6 +172,9 @@ Interactive API docs (Swagger UI) are available at
 2. Turn on **Developer mode** (top-right toggle).
 3. Click **Load unpacked** and select the `extension/` folder.
 4. `Aiva Nex Agent` should appear in your extensions list and toolbar.
+5. Open the side panel → **⚙ Settings** → paste the server token →
+   **Save & Test Connection** (it should say "Connected"). The token is kept
+   in `chrome.storage.local` only.
 
 ### 3. Open the demo page
 
@@ -192,10 +229,10 @@ reasoning during a live demo.
 | OTP fields                 | `OTP_FIELD`                      | label/name/placeholder hint (`otp`, `one-time code`) |
 | Hidden inputs               | `HIDDEN_FIELD`                   | `input[type=hidden]` or CSS-hidden |
 | Email addresses            | `EMAIL_1`, `EMAIL_2`, …           | label hint, or regex fallback on the value |
-| Phone numbers (Indian)      | `PHONE_1`, …                      | label hint, or regex fallback |
-| Aadhaar-like 12-digit IDs   | `ID_NUMBER_1`, …                  | label hint, or regex fallback |
-| PAN-like IDs                | `ID_NUMBER_1`, …                  | label hint, or regex fallback |
-| Card-like numbers (13–19 digits) | `CARD_1`, …                 | label hint, or regex fallback |
+| Phone numbers (Indian)      | `PHONE_1`, …                      | label hint, or `+91`/`91` optional + 10 digits starting 6-9 |
+| Aadhaar numbers             | `ID_NUMBER_1`, …                  | label hint, or 12 digits, first digit 2-9 (+ Verhoeff checksum = validated) |
+| PAN                         | `ID_NUMBER_1`, …                  | label hint, or `[A-Z]{3}[ABCFGHLJPT][A-Z][0-9]{4}[A-Z]` (validated) |
+| Card numbers (13–19 digits, spaces/dashes ok) | `CARD_1`, …     | label hint, or digit run (+ Luhn checksum = validated) |
 | Names                        | `PERSON_1`, …                    | field label containing "name" (best-effort — see limitations) |
 | Addresses                    | `ADDRESS_1`, …                   | field label containing "address" (best-effort) |
 
@@ -207,6 +244,16 @@ Detection runs in this priority order for any given field: **field type**
 (password/hidden) → **label/name/placeholder hint** → **regex scan of the
 actual value** as a fallback for unlabeled free text (e.g. a "comments" box
 that happens to contain an email or phone number).
+
+**Candidates vs. validated (the false-positive policy).** The extension
+tokenises every value of the right *shape* — a 12-digit number starting 2-9
+becomes `ID_NUMBER_n` even if its Verhoeff digit is wrong, because
+over-redacting costs nothing. The server's reject rule is stricter: it only
+returns `400` for *validated* PII (Verhoeff-valid Aadhaar, Luhn-valid card,
+strict-format PAN, phone, email). So an order number like `234567890123` or
+a 16-digit reference that fails Luhn no longer causes a false rejection.
+The exact same logic lives in `extension/pii-checks.js` and
+`server/pii_checks.py`, and both test suites use the same test vectors.
 
 ## The screen graph sent to the server
 
@@ -254,11 +301,38 @@ Notes on what's deliberately **not** included:
   `decidedBy` tells you whether a real local model answered, or the
   rule-based fallback did — the popup shows this too.
 
-  Before deciding anything, the server re-scans the raw request body for
-  PII-shaped substrings (email/phone/Aadhaar/PAN/card patterns). If any are
-  found, it responds `400` and refuses to process the request — this is a
-  defense-in-depth backstop in case client-side redaction ever has a bug,
-  not the primary defense.
+  Before deciding anything, the server re-scans every string in the request
+  for validated PII (email, phone, Verhoeff-valid Aadhaar, strict PAN,
+  Luhn-valid card). If any is found, it responds `400` naming only the type,
+  never the value — a defense-in-depth backstop in case client-side
+  redaction ever has a bug, not the primary defense.
+
+- `POST /chat` → same PII check on the message and graph, then answers.
+- All endpoints except `/health` need the `X-Aiva-Token` header (`401`
+  otherwise). Oversized bodies get `413`, over-long fields `422` (the error
+  never echoes the submitted text back).
+
+## Privacy and network behaviour
+
+| Path | Default | How to enable |
+|---|---|---|
+| Local LLM (`LOCAL_LLM_BASE_URL`) | On, **loopback only** (`localhost`/`127.x`/`::1`) | A non-loopback URL is refused unless `AIVA_ALLOW_CLOUD=1` |
+| Gemini cloud fallback | **Off** | `AIVA_ALLOW_CLOUD=1` **and** `GEMINI_API_KEY` (model via `GEMINI_MODEL`, default `gemini-2.5-flash`). Sends *sanitized* page context to Google; the server logs a loud warning on start and on every call |
+| Feedback to `manager.aivafreelancia.in` | **Off** | Tick the opt-in in the side panel's ⚙ Settings |
+| Chat "open Google/Amazon/YouTube search" | Only when you ask for it | Opens a normal browser tab with *your typed query*, not page content |
+
+The server never logs request bodies, page text or PII; `uvicorn` access
+logs contain only method, path and status.
+
+## Running the tests
+
+```bash
+# Extension (Node 18+, no dependencies)
+node --test "extension/tests/*.test.js"
+
+# Server (one-time: python -m venv server/.venv && server/.venv/Scripts/pip install -r server/requirements-dev.txt)
+cd server && python -m pytest -q
+```
 
 ## Using a local model
 
@@ -271,7 +345,8 @@ model reasoning, without one you get the same reliable rule-based behavior.
 
 It talks to any server that speaks the OpenAI `/v1/chat/completions` format
 on localhost — no new pip dependency, just one HTTP call via the Python
-standard library.
+standard library. A `LOCAL_LLM_BASE_URL` that points anywhere other than
+this machine is refused unless you set `AIVA_ALLOW_CLOUD=1`.
 
 **Recommended: [Ollama](https://ollama.com)** — runs headless as a
 background service, no GUI app needed:
@@ -332,12 +407,13 @@ Being upfront about what this prototype does and doesn't do:
   A field is classified as a name/address because its label/placeholder/name
   attribute says so — this is reliable on structured forms (the actual use
   case here) but won't catch a name mentioned in unlabeled free text.
-- **Phone/Aadhaar/PAN/card patterns are shape-based**, not checksum-validated
-  (e.g. no real Aadhaar Verhoeff check, no Luhn check on card numbers) — by
-  design, since the goal is "don't send anything that looks like PII," not
-  "verify this is a real government ID."
+- **Checksums confirm shape, not ownership.** Verhoeff (Aadhaar) and Luhn
+  (cards) tell a real-looking number from a random one; they cannot tell
+  whether it belongs to anyone. Phone numbers have no checksum, so any
+  10-digit number starting 6-9 counts as a phone.
 - **Redaction overlays reposition on scroll/resize but are a visual aid**,
   not a security boundary — the actual privacy guarantee is that raw values
   never enter the JSON that gets sent, independent of what's drawn on screen.
-- No authentication on the local server — it's a local prototype, not meant
-  to be exposed beyond `127.0.0.1`.
+- The shared token stops other web pages and local apps from driving the
+  server, but it is a single static secret, not per-user auth. The server
+  binds to `127.0.0.1` only and is not meant to be exposed further.
