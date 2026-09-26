@@ -1,4 +1,4 @@
-﻿"""On-device OCR wrapper (RapidOCR = PaddleOCR PP-OCR models exported to ONNX).
+"""On-device OCR wrapper (RapidOCR = PaddleOCR PP-OCR models exported to ONNX).
 
 Why RapidOCR: ~15 MB of ONNX models that ship inside the pip wheel (no
 separate download, nothing fetched at runtime), runs on onnxruntime's CPU
