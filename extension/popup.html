@@ -17,6 +17,7 @@
         <span class="dot" id="serverDot"></span>
       </button>
       <button id="feedbackToggleBtn" class="icon-btn" title="Send feedback" type="button">💬</button>
+      <button id="settingsToggleBtn" class="icon-btn" title="Settings (server token, privacy)" type="button">⚙</button>
     </div>
   </header>
 
@@ -76,6 +77,18 @@
     <div class="status-line" id="feedbackStatusLine"></div>
   </section>
 
+  <!-- [privacy-hardening] Settings: server token + off-device feedback opt-in (extension/settings.js) -->
+  <section class="feedback-panel hidden" id="settingsSection">
+    <div class="section-label">⚙ Settings</div>
+    <div class="field">
+      <label for="serverTokenInput">Server token (printed by <code>python main.py</code>, stored in server/.aiva_token)</label>
+      <input type="password" id="serverTokenInput" placeholder="Paste the server token" autocomplete="off" />
+    </div>
+    <label class="profile-hint"><input type="checkbox" id="feedbackOptIn" /> Allow sending feedback off-device (to manager.aivafreelancia.in). Off by default.</label>
+    <button id="saveSettingsBtn" class="btn btn-primary" type="button">Save &amp; Test Connection</button>
+    <div class="status-line" id="settingsStatusLine"></div>
+  </section>
+
   <footer class="dock">
     <div class="quick-chips" id="promptChips">
       <button type="button" class="chip-btn" data-query="best prices for rtx 5060 in amazon">🔍 Search Amazon</button>
@@ -109,5 +122,6 @@
 
   <script src="memory.js"></script>
   <script src="popup.js"></script>
+  <script src="settings.js"></script>
 </body>
 </html>

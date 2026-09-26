@@ -13,6 +13,29 @@ const SERVER_URL = "http://127.0.0.1:8000";
 // from apps with no Work Manager login of their own.
 const FEEDBACK_URL = "https://manager.aivafreelancia.in/api/feedback";
 
+// [privacy-hardening] Every server call except /health carries the shared
+// token (Settings panel -> chrome.storage.local.aivaServerToken) in the
+// X-Aiva-Token header; the server answers 401 without it. Off-device
+// feedback is sent only when the user ticked the opt-in in Settings.
+function getSettings() {
+  return new Promise((resolve) =>
+    chrome.storage.local.get(["aivaServerToken", "aivaFeedbackOptIn"], (s) => resolve(s || {}))
+  );
+}
+
+async function serverFetch(path, options = {}) {
+  const { aivaServerToken } = await getSettings();
+  const headers = { ...(options.headers || {}) };
+  if (aivaServerToken) headers["X-Aiva-Token"] = aivaServerToken;
+  const res = await fetch(SERVER_URL + path, { ...options, headers });
+  if (res.status === 401) {
+    const err = new Error("Server token missing or wrong - open Settings (gear icon) and paste the token printed by the server.");
+    err.status = 401;
+    throw err;
+  }
+  return res;
+}
+
 // The extension has no default_popup any more (see manifest.json) - it uses
 // the Side Panel API instead, so the UI opens as a full-height panel docked
 // to the browser window (like Claude for Chrome) rather than a small
@@ -23,7 +46,7 @@ chrome.action.onClicked.addListener((tab) => {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "SEND_TO_SERVER") {
-    fetch(SERVER_URL + "/analyze", {
+    serverFetch("/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(msg.graph),
@@ -36,7 +59,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ ok: true, action: data });
         }
       })
-      .catch((err) => sendResponse({ ok: false, error: "Could not reach server: " + err.message }));
+      .catch((err) => sendResponse({ ok: false, error: err.status === 401 ? err.message : "Could not reach server: " + err.message }));
     return true; // keep the message channel open for the async response
   }
 
@@ -49,7 +72,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === "GET_MODELS") {
-    fetch(SERVER_URL + "/models")
+    serverFetch("/models")
       .then((res) => res.json())
       .then((data) => sendResponse({ ok: true, data }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
@@ -57,7 +80,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === "CHAT_WITH_SERVER") {
-    fetch(SERVER_URL + "/chat", {
+    serverFetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -75,7 +98,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ ok: true, data });
         }
       })
-      .catch((err) => sendResponse({ ok: false, error: "Could not reach server: " + err.message }));
+      .catch((err) => sendResponse({ ok: false, error: err.status === 401 ? err.message : "Could not reach server: " + err.message }));
     return true;
   }
 
@@ -96,11 +119,33 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
   }
 
+  if (msg.type === "CHECK_AUTH") {
+    serverFetch("/models")
+      .then((res) => sendResponse(res.ok ? { ok: true } : { ok: false, error: "Server answered HTTP " + res.status }))
+      .catch((err) => sendResponse({ ok: false, error: err.status === 401 ? err.message : "Could not reach server: " + err.message }));
+    return true;
+  }
+
   if (msg.type === "SEND_FEEDBACK") {
+    getSettings().then(({ aivaFeedbackOptIn }) => {
+      if (aivaFeedbackOptIn !== true) {
+        sendResponse({ ok: false, error: "Off-device feedback is disabled. Enable it in Settings (gear icon) to send." });
+        return;
+      }
+      sendFeedback(msg.payload, sendResponse);
+    });
+    return true;
+  }
+
+  return false;
+});
+
+// Off-device: only reached after the Settings opt-in check above.
+function sendFeedback(payload, sendResponse) {
     fetch(FEEDBACK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(msg.payload),
+      body: JSON.stringify(payload),
     })
       .then(async (res) => {
         const data = await res.json().catch(() => ({}));
@@ -111,8 +156,4 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
       })
       .catch((err) => sendResponse({ ok: false, error: "Could not reach the feedback server: " + err.message }));
-    return true;
-  }
-
-  return false;
-});
+}
