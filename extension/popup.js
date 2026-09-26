@@ -279,6 +279,22 @@ function runSend() {
   el.primaryActionBtn.disabled = true;
   const model = el.modelSelect.value;
   const graphWithModel = { ...lastGraph, model };
+  // --- Visual perception (SIH26171) hook: see vision.js ---
+  if (window.AivaVision && AivaVision.isEnabled()) {
+    setStatus("Visual mode: masking screenshot on-device, perceiving locally…");
+    AivaVision.augmentGraph(activeTabId, graphWithModel)
+      .then((g) => sendGraphToServer(g))
+      .catch((err) => {
+        el.primaryActionBtn.disabled = false;
+        setStatus("Visual perception failed (nothing was sent): " + err.message, "error");
+      });
+    return;
+  }
+  // --- end visual perception hook ---
+  sendGraphToServer(graphWithModel);
+}
+
+function sendGraphToServer(graphWithModel) {
   chrome.runtime.sendMessage({ type: "SEND_TO_SERVER", graph: graphWithModel }, (res) => {
     el.primaryActionBtn.disabled = false;
     if (chrome.runtime.lastError || !res) {
@@ -291,6 +307,7 @@ function runSend() {
     }
     lastAction = res.action;
     renderAction(lastAction);
+    if (window.AivaVision) AivaVision.afterAction(activeTabId, lastAction); // visual highlight (SIH26171)
     flowStep = "done";
     updatePrimaryButton();
     setStatus("Server responded with an action.", "ok");
@@ -300,6 +317,7 @@ function runSend() {
 function renderAction(action) {
   const lines = [`<span class="action-type">${action.action}</span>`];
   if (action.targetRef) lines.push(`target: ${action.targetRef}`);
+  if (action.targetVisualId) lines.push(`visual target: ${action.targetVisualId} "${escapeHtml(action.visualText || "")}"`);
   if (action.direction) lines.push(`direction: ${action.direction}`);
   if (action.summary) lines.push(action.summary);
   if (action.reason) lines.push(`<em>${action.reason}</em>`);
@@ -308,6 +326,13 @@ function renderAction(action) {
 
 function runExecute() {
   if (!lastAction || activeTabId == null) return;
+  // Visual-only target (no DOM ref): act at the perceived bbox (SIH26171).
+  if (window.AivaVision && AivaVision.handlesAction(lastAction)) {
+    AivaVision.executeAction(activeTabId, lastAction)
+      .then((r) => setStatus(r.ok ? r.message : r.error, r.ok ? "ok" : "error"))
+      .catch(() => setStatus("Could not execute action on page.", "error"));
+    return;
+  }
   chrome.tabs.sendMessage(activeTabId, { type: "EXECUTE_ACTION", action: lastAction }, (res) => {
     if (chrome.runtime.lastError || !res) {
       setStatus("Could not execute action on page.", "error");
