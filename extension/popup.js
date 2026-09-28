@@ -366,6 +366,17 @@ function handleLocalIntent(query) {
   if (!window.AivaIntent) return false;
   const intent = AivaIntent.parseIntent(query);
 
+  if (intent.type === "navigate") {
+    if (!AivaIntent.isSafeUrl(intent.url)) return true;
+    addCard(`Opening ${escapeHtml(intent.siteName || intent.site || intent.url)}${intent.newTab ? " in a new tab" : ""}…`, "chat-msg-agent");
+    chrome.runtime.sendMessage({ type: "NAVIGATE_TAB", url: intent.url, newTab: !!intent.newTab }, () => void chrome.runtime.lastError);
+    lastGraph = null;
+    flowStep = "scan";
+    updatePrimaryButton();
+    setStatus("Ready", "ok");
+    return true;
+  }
+
   if (intent.type === "search") {
     // Never send personal data to a search engine either.
     const pii = tokeniseChatText(intent.query, {});
@@ -378,9 +389,15 @@ function handleLocalIntent(query) {
       return true;
     }
     if (!AivaIntent.isSafeUrl(intent.url)) return true;
-    const where = intent.site || "Google";
-    addCard(`Searching ${escapeHtml(where)} for '${escapeHtml(intent.query)}'…`, "chat-msg-agent");
-    chrome.runtime.sendMessage({ type: "NAVIGATE_TAB", url: intent.url }, () => void chrome.runtime.lastError);
+    const where = intent.site ? intent.siteName || intent.site : "Google";
+    const label = where.charAt(0).toUpperCase() + where.slice(1);
+    addCard(
+      intent.newTab
+        ? `Opening ${escapeHtml(label)} in a new tab: ${escapeHtml(intent.query)}`
+        : `Searching ${escapeHtml(label)} for '${escapeHtml(intent.query)}'…`,
+      "chat-msg-agent"
+    );
+    chrome.runtime.sendMessage({ type: "NAVIGATE_TAB", url: intent.url, newTab: !!intent.newTab }, () => void chrome.runtime.lastError);
     // The page is about to change - the old scan no longer applies.
     lastGraph = null;
     flowStep = "scan";

@@ -144,6 +144,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: false, error: "Refused to open a non-http(s) URL." });
       return false;
     }
+    if (msg.url && msg.newTab) {
+      chrome.tabs.create({ url: msg.url, active: true }, (newTab) => {
+        sendResponse({ ok: true, tabId: newTab && newTab.id });
+      });
+      return true;
+    }
     if (msg.url) {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs && tabs[0]) {

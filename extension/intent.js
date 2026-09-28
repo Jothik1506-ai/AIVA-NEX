@@ -74,28 +74,113 @@
     /^(?:please\s+|can you\s+|could you\s+)?(?:summari[sz]e|summary(?: of)?|give me a summary of|tl;?dr)(?:\s+(?:the|this|current|this current))?(?:\s+(?:page|tab|site|website|article|web ?page))?(?:\s+for me)?$/i;
 
   function parseSearch(rest, allowSite) {
-    let q = rest.replace(/^for\s+/i, "").trim();
+    let q = cleanQuery(rest.replace(/^for\s+/i, ""));
     if (!q) return null;
     if (allowSite) {
-      // "search <q> in|on <site>"
-      let m = q.match(/^(.+?)\s+(?:in|on|at)\s+(\S+(?: overflow)?)$/i);
+      // "search <q> in|on|at <site>"
+      let m = q.match(/^(.+?)\s+(?:in|on|at)\s+(?:the\s+)?(\S+(?: overflow)?)(?:\s+(?:website|site|app))?$/i);
       if (m) {
         const site = resolveSite(m[2]);
-        if (site) return { site, query: m[1].trim() };
+        if (site) return { site, query: cleanQuery(m[1]) };
       }
       // "search <site> for <q>"
-      m = q.match(/^(\S+)\s+for\s+(.+)$/i);
+      m = q.match(/^(?:the\s+)?(\S+(?: overflow)?)\s+for\s+(.+)$/i);
       if (m) {
         const site = resolveSite(m[1]);
-        if (site) return { site, query: m[2].trim() };
+        if (site) return { site, query: cleanQuery(m[2]) };
       }
     }
     return { site: null, query: q };
   }
 
+  // Tab modifiers can appear anywhere: "in new tab open ...", "... in a new tab".
+  const NEW_TAB_RE = /(?:^|[\s,])(?:(?:in|on|using|with)\s+)?(?:a\s+)?new\s+tab(?=$|[\s,])/i;
+  const SAME_TAB_RE = /(?:^|[\s,])(?:in|on)\s+(?:this|the\s+same|the\s+current|current|same)\s+tab(?=$|[\s,])/i;
+  const HERE_RE = /(?:^\s*here\s*,?\s+|[\s,]+here$)/i;
+  const FILLER_START = /^(?:please|pls|kindly|can you|could you|would you|will you|hey|ok|okay|just|i want to|i want you to)\s*,?\s+/i;
+  const FILLER_END = /\s*,?\s+(?:please|for me|pls)$/i;
+
+  function extractModifiers(t) {
+    let newTab = false;
+    let s = " " + t + " ";
+    if (NEW_TAB_RE.test(s)) { newTab = true; s = s.replace(NEW_TAB_RE, " "); }
+    s = s.replace(SAME_TAB_RE, " ");
+    s = s.replace(/\s+/g, " ").trim().replace(HERE_RE, " ");
+    return { newTab, text: tidy(s) };
+  }
+
+  function tidy(s) {
+    return String(s).replace(/\s+/g, " ").replace(/\s+,/g, ",").replace(/^[\s,]+|[\s,]+$/g, "").trim();
+  }
+
+  function stripFiller(s) {
+    let prev;
+    do {
+      prev = s;
+      s = tidy(s.replace(FILLER_START, "").replace(FILLER_END, ""));
+    } while (s !== prev);
+    return s;
+  }
+
+  function cleanQuery(q) {
+    return tidy(String(q || "").replace(/^(?:for|about)\s+/i, "").replace(FILLER_END, "").replace(/^["']|["']$/g, ""));
+  }
+
+  function wwwHost(host) {
+    return host.split(".").length === 2 ? "www." + host : host;
+  }
+
+  /** Site phrase from "open <site>": drops "the", "website", trailing "phone"/"product". */
+  function cleanSitePhrase(s) {
+    return tidy(String(s).replace(/^(?:the)\s+/i, "").replace(/\s+(?:website|web ?site|site|app|homepage|home page|page|phone|product|products)$/i, ""));
+  }
+
+  const SEARCH_VERB = /(?:search(?:\s+for)?|look\s+for|look\s+up|find|show\s+me|get\s+me)/.source;
+  const OPEN_RE = /^(?:open(?:\s+up)?|go\s+to|goto|visit|navigate\s+to|launch|take\s+me\s+to|browse\s+to)\s+(.+)$/i;
+  const OPEN_THEN_SEARCH_RE = new RegExp(/^(.+?)\s*(?:,\s*|\s+)(?:(?:and\s+then|and|then)\s+)?/.source + SEARCH_VERB + /\s+(.+)$/.source, "i");
+  const SEARCH_RE = new RegExp("^" + SEARCH_VERB + /\s+(.+)$/.source, "i");
+
+  function buildSearch(site, query, newTab) {
+    const url = site ? siteSearchUrl(site, query) : googleUrl(query);
+    if (!isSafeUrl(url)) return null;
+    return { type: "search", query, url, site: site ? site.host : null, siteName: site ? site.name : "Google", newTab };
+  }
+
+  /** "open <site> [and search <q>]" / "open https://x.org". */
+  function parseOpen(rest, newTab) {
+    rest = tidy(rest);
+    const urlM = rest.match(/^(https?:\/\/\S+)$/i);
+    if (urlM) {
+      return isSafeUrl(urlM[1]) ? { type: "navigate", url: urlM[1], site: new URL(urlM[1]).host, siteName: new URL(urlM[1]).host, newTab } : null;
+    }
+    let sitePhrase = rest;
+    let query = "";
+    const m = rest.match(OPEN_THEN_SEARCH_RE);
+    if (m) { sitePhrase = m[1]; query = cleanQuery(m[2]); }
+    sitePhrase = cleanSitePhrase(sitePhrase);
+    if (!sitePhrase) return null;
+    let site = resolveSite(sitePhrase);
+    const oneWord = /^[a-z0-9-]+$/i.test(sitePhrase);
+    if (query) {
+      if (!site && oneWord) site = { name: sitePhrase.toLowerCase(), host: sitePhrase.toLowerCase() + ".com", path: null };
+      if (!site) return buildSearch(null, sitePhrase + " " + query, newTab);
+      return buildSearch(site, query, newTab);
+    }
+    if (site) {
+      const url = "https://" + (SITES[site.name] ? wwwHost(site.host) : site.host);
+      return isSafeUrl(url) ? { type: "navigate", url, site: site.host, siteName: site.name, newTab } : null;
+    }
+    if (oneWord) {
+      const host = sitePhrase.toLowerCase() + ".com";
+      return { type: "navigate", url: "https://" + host, site: host, siteName: host, newTab };
+    }
+    return buildSearch(null, sitePhrase, newTab);
+  }
+
   /**
    * parseIntent(text) ->
-   *   { type: "search", query, url, site }   site = host or null (Google)
+   *   { type: "search", query, url, site, siteName, newTab }  site = host or null (Google)
+   *   { type: "navigate", url, site, siteName, newTab }
    *   { type: "summarize" }
    *   { type: "scroll", direction: "up"|"down" }
    *   { type: "click", label }
@@ -122,14 +207,42 @@
     m = t.match(/^(?:please\s+)?click(?:\s+on)?\s+(?:the\s+)?(.+?)(?:\s+(?:button|link))?$/i);
     if (m && m[1]) return { type: "click", label: m[1].replace(/^["']|["']$/g, "").trim() };
 
-    m = t.match(/^(?:please\s+)?(google|search|look up|find)\s+(.+)$/i);
+    const mods = extractModifiers(t);
+    const body = stripFiller(mods.text);
+    if (!body) return { type: "chat" };
+
+    // "google <q>" always searches Google literally.
+    m = body.match(/^google\s+(.+)$/i);
     if (m) {
-      const verb = m[1].toLowerCase();
-      const parsed = parseSearch(m[2], verb !== "google");
+      const q = cleanQuery(m[1]);
+      const r = q && buildSearch(null, q, mods.newTab);
+      if (r) return r;
+    }
+
+    m = body.match(OPEN_RE);
+    if (m) {
+      const r = parseOpen(m[1], mods.newTab);
+      if (r) return r;
+    }
+
+    m = body.match(SEARCH_RE);
+    if (m) {
+      const parsed = parseSearch(m[1], true);
       if (parsed && parsed.query) {
-        const url = parsed.site ? siteSearchUrl(parsed.site, parsed.query) : googleUrl(parsed.query);
-        if (isSafeUrl(url)) return { type: "search", query: parsed.query, url, site: parsed.site ? parsed.site.host : null };
+        const r = buildSearch(parsed.site, parsed.query, mods.newTab);
+        if (r) return r;
       }
+    }
+
+    // "<known site> <query>" only with an explicit tab modifier ("new tab youtube lofi").
+    if (mods.newTab) {
+      m = body.match(/^(\S+)\s+(.+)$/);
+      const site = m && SITES[ALIASES[m[1].toLowerCase()] || m[1].toLowerCase()] && resolveSite(m[1]);
+      if (site) {
+        const r = buildSearch(site, cleanQuery(m[2]), true);
+        if (r) return r;
+      }
+      if (resolveSite(body)) return parseOpen(body, true) || { type: "chat" };
     }
 
     return { type: "chat" };

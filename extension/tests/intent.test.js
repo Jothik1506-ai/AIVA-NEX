@@ -70,3 +70,53 @@ test("findTargetRef matches button/link/input labels", () => {
   assert.equal(I.findTargetRef(g, "email"), "i1");
   assert.equal(I.findTargetRef(g, "checkout"), null);
 });
+
+// ---- natural-language navigation / search (table-driven) ----
+const AMZ = (q) => "https://www.amazon.in/s?k=" + encodeURIComponent(q);
+const G = (q) => "https://www.google.com/search?q=" + encodeURIComponent(q);
+const CASES = [
+  ["in new tab open amazon and search for I phone 16 pro phone", "search", AMZ("I phone 16 pro phone"), true],
+  ["In a new tab, open Amazon and search for iphone 16 pro phone.", "search", AMZ("iphone 16 pro phone"), true],
+  ["open amazon and search iphone 16 pro", "search", AMZ("iphone 16 pro"), false],
+  ["open amazon then search iphone 16 pro", "search", AMZ("iphone 16 pro"), false],
+  ["open amazon phone and search for iphone", "search", AMZ("iphone"), false],
+  ["go to flipkart, find running shoes", "search", "https://www.flipkart.com/search?q=running%20shoes", false],
+  ["search for iphone 16 on amazon in a new tab", "search", AMZ("iphone 16"), true],
+  ["can you please look up rtx 5060 on amazon", "search", AMZ("rtx 5060"), false],
+  ["could you find earbuds on amazon for me", "search", AMZ("earbuds"), false],
+  ["open youtube", "navigate", "https://www.youtube.com", false],
+  ["Open YouTube in new tab", "navigate", "https://www.youtube.com", true],
+  ["open github.com", "navigate", "https://www.github.com", false],
+  ["go to https://x.org", "navigate", "https://x.org", false],
+  ["navigate to www.Amazon.in", "navigate", "https://www.amazon.in", false],
+  ["visit wikipedia and search isro", "search", "https://en.wikipedia.org/wiki/Special:Search?search=isro", false],
+  ["new tab google best laptops 2026", "search", G("best laptops 2026"), true],
+  ["new tab youtube lofi music", "search", "https://www.youtube.com/results?search_query=lofi%20music", true],
+  ["search amazon for earbuds", "search", AMZ("earbuds"), false],
+  ["open example.org and search foo", "search", G("site:example.org foo"), false],
+  ["launch netflix", "navigate", "https://netflix.com", false],
+  ["open my bank website", "search", G("my bank"), false],
+  ["here open amazon and show me laptops", "search", AMZ("laptops"), false],
+  ["open amazon and search earbuds in this tab", "search", AMZ("earbuds"), false],
+  ["take me to the flipkart website", "navigate", "https://www.flipkart.com", false],
+];
+
+for (const [text, type, url, newTab] of CASES) {
+  test(`NL: ${text}`, () => {
+    const r = I.parseIntent(text);
+    assert.equal(r.type, type);
+    assert.equal(r.url, url);
+    assert.equal(r.newTab, newTab);
+  });
+}
+
+test("NL negatives stay local/chat; PII query is a search the panel blocks", () => {
+  assert.equal(I.parseIntent("summarize this page").type, "summarize");
+  assert.equal(I.parseIntent("what is on this page").type, "chat");
+  assert.equal(I.parseIntent("open").type, "chat");
+  assert.equal(I.parseIntent("new tab").type, "chat");
+  assert.equal(I.parseIntent("open javascript:alert(1)").type !== "navigate" || false, true);
+  const r = I.parseIntent("search 9999 4105 7058");
+  assert.equal(r.type, "search");
+  assert.equal(r.query, "9999 4105 7058"); // popup.js tokeniseChatText blocks this before navigating
+});
