@@ -358,35 +358,171 @@ def _any_word_in(q: str, words: List[str]) -> bool:
     return any(re.search(r"(?<![a-zA-Z])" + re.escape(w) + r"(?![a-zA-Z])", q) for w in words)
 
 
-def decide_action_rules(graph: dict) -> dict:
-    inputs = graph.get("inputs") or []
-    buttons = graph.get("buttons") or []
+# --- rule-engine fallback for /analyze -------------------------------------
+# Graph shape (extension/content.js collectFields/collectButtons): each input is
+# {ref, type, label, required, isSensitive, sanitizedValue, position}; each
+# button is {ref, text, position}. Sensitive values arrive as bare tokens
+# (EMAIL_1, PASSWORD_FIELD, OTP_FIELD_2 ...), so a tokenised value means "value
+# hidden", not necessarily "filled". Legacy callers sent `sensitive` /
+# `sensitiveType`; `sensitiveType` is still honoured, and `categories` /
+# `hasValue` are accepted if a caller includes them.
 
-    for inp in inputs:
-        stype = inp.get("sensitiveType")
-        if stype in ("PASSWORD", "OTP"):
-            return {
-                "action": "focus",
-                "targetRef": inp["ref"],
-                "reason": f"An {stype} field was detected and likely needs input next.",
-            }
+_BARE_TOKEN_RE = re.compile(r"^[A-Z]+(?:_[A-Z]+)*(?:_\d+)?$")
+_CREDENTIAL_TOKEN_RE = re.compile(r"^(?:PASSWORD|OTP)_FIELD(?:_\d+)?$")
+_CREDENTIAL_LABEL_RE = re.compile(
+    r"\b(?:password|passcode|passphrase|otp|one[\s-]?time\s+(?:password|code)|m?pin|cvv|cvc|security\s+code)\b",
+    re.IGNORECASE,
+)
+_NON_FOCUSABLE_TYPES = {"hidden", "submit", "button", "reset", "image", "checkbox", "radio", "file"}
 
+# Buttons that finish or advance the task on the page vs. ones that leave,
+# undo, or do something secondary. Secondary patterns are checked first.
+_SECONDARY_BUTTON_RE = re.compile(
+    r"\b(?:cancel|back|previous|prev|download|print|refresh|reload|edit|track|forgot|reset|clear|close|"
+    r"dismiss|skip|delete|remove|filter|sort|share|log\s*out|sign\s*out|logout|draft|help)\b"
+    r"|\bcontinue\s+(?:shopping|browsing)\b",
+    re.IGNORECASE,
+)
+_PRIMARY_BUTTON_RE = re.compile(
+    r"\b(?:submit|continue|next|proceed|apply|pay|confirm|verify|register|sign\s*up|signup|sign\s*in|signin|"
+    r"log\s*in|login|place\s+order|checkout|check\s*out|buy|add|save|send|search|find|go|done|finish|use|book|"
+    r"start|ok|okay|accept|agree|update|upload|request|create|join|subscribe)\b",
+    re.IGNORECASE,
+)
+# Page text saying more content follows below the fold.
+_MORE_CONTENT_RE = re.compile(
+    r"\bscroll\b|\b(?:load|show|see|view|read)\s+more\b|\b(?:continue|keep)\s+reading\b"
+    r"|\bshowing\s+[\d,]+\s*(?:-|–|to)\s*[\d,]+\s+of\s+[\d,]+",
+    re.IGNORECASE,
+)
+
+
+def _input_categories(inp: dict) -> set:
+    cats = inp.get("categories") or {}
+    if isinstance(cats, (dict, list, tuple, set)):
+        return {str(k).upper() for k in cats}
+    return set()
+
+
+def _is_credential_field(inp: dict) -> bool:
+    """Password / OTP / PIN / CVV style field the user has to type into."""
+    if str(inp.get("type") or "").lower() == "password":
+        return True
+    if str(inp.get("sensitiveType") or "").upper() in ("PASSWORD", "OTP"):  # legacy field name
+        return True
+    if _input_categories(inp) & {"PASSWORD_FIELD", "OTP_FIELD", "PASSWORD", "OTP"}:
+        return True
+    if _CREDENTIAL_TOKEN_RE.match(str(inp.get("sanitizedValue") or "")):
+        return True
+    return bool(_CREDENTIAL_LABEL_RE.search(str(inp.get("label") or "")))
+
+
+def _value_state(inp: dict) -> str:
+    """'empty', 'filled' or 'unknown' (a bare token hides whether a value exists)."""
+    for key in ("hasValue", "filled"):
+        if isinstance(inp.get(key), bool):
+            return "filled" if inp[key] else "empty"
+    if isinstance(inp.get("isEmpty"), bool):
+        return "empty" if inp["isEmpty"] else "filled"
+    val = inp.get("sanitizedValue")
+    if val is None:
+        val = inp.get("value")
+    val = "" if val is None else str(val).strip()
+    if not val or val.lower() == "unchecked":
+        return "empty"
+    if _BARE_TOKEN_RE.match(val):
+        return "unknown"
+    return "filled"
+
+
+def _is_focusable_input(inp: dict) -> bool:
+    if not inp.get("ref"):
+        return False
+    if str(inp.get("type") or "").lower() in _NON_FOCUSABLE_TYPES:
+        return False
+    return not str(inp.get("sanitizedValue") or "").startswith("HIDDEN_FIELD")
+
+
+def _primary_button(buttons: list) -> Optional[dict]:
     for btn in buttons:
-        txt = (btn.get("text") or "").lower()
-        if any(w in txt for w in ["submit", "continue", "next", "login", "pay", "proceed", "apply"]):
-            return {
-                "action": "click",
-                "targetRef": btn["ref"],
-                "reason": f"A primary action button ('{btn.get('text')}') is ready to be clicked.",
-            }
+        txt = re.sub(r"\s+", " ", str(btn.get("text") or "")).strip()
+        if not txt or not btn.get("ref") or _SECONDARY_BUTTON_RE.search(txt):
+            continue
+        if _PRIMARY_BUTTON_RE.search(txt):
+            return btn
+    return None
 
-    for inp in inputs:
-        if inp.get("sensitive"):
+
+def _has_more_content(graph: dict) -> bool:
+    texts = list(graph.get("headings") or []) + list(graph.get("textSnippets") or [])
+    if any(_MORE_CONTENT_RE.search(str(t)) for t in texts):
+        return True
+    # Optional geometry, used only if a caller sends it: document taller than the viewport.
+    vp = graph.get("viewport")
+    if not isinstance(vp, dict):
+        return False
+    try:
+        vh = float(vp.get("height") or 0)
+        doc_h = float(vp.get("scrollHeight") or graph.get("scrollHeight") or 0)
+        scroll_y = float(vp.get("scrollY") or 0)
+    except (TypeError, ValueError):
+        return False
+    return vh > 0 and doc_h > scroll_y + vh * 1.1
+
+
+def _field_name(inp: dict) -> str:
+    return inp.get("label") or inp.get("ref")
+
+
+def decide_action_rules(graph: dict) -> dict:
+    inputs = [i for i in (graph.get("inputs") or []) if isinstance(i, dict)]
+    buttons = [b for b in (graph.get("buttons") or []) if isinstance(b, dict)]
+    fields = [i for i in inputs if _is_focusable_input(i)]
+
+    # 1. Never submit while a required field is still empty.
+    for inp in fields:
+        if inp.get("required") and _value_state(inp) == "empty":
             return {
                 "action": "focus",
                 "targetRef": inp["ref"],
-                "reason": "Focusing the next sensitive input field.",
+                "reason": f"Required field '{_field_name(inp)}' is still empty.",
             }
+
+    # 2. Password / OTP / PIN / CVV fields that are empty, or whose value is
+    #    hidden behind a token, most likely need the user's input next.
+    for inp in fields:
+        if _is_credential_field(inp) and _value_state(inp) in ("empty", "unknown"):
+            return {
+                "action": "focus",
+                "targetRef": inp["ref"],
+                "reason": f"The '{_field_name(inp)}' field (password/OTP/PIN) likely needs input next.",
+            }
+
+    # 3. Primary submit-like button.
+    btn = _primary_button(buttons)
+    if btn is not None:
+        return {
+            "action": "click",
+            "targetRef": btn["ref"],
+            "reason": f"A primary action button ('{btn.get('text')}') is ready to be clicked.",
+        }
+
+    # 4. No button to press but an empty field to fill (e.g. a lone search box).
+    for inp in fields:
+        if _value_state(inp) == "empty" and str(inp.get("type") or "").lower() != "select":
+            return {
+                "action": "focus",
+                "targetRef": inp["ref"],
+                "reason": f"Field '{_field_name(inp)}' is empty and there is no action button.",
+            }
+
+    # 5. Nothing actionable, and the page says more content follows below.
+    if _has_more_content(graph):
+        return {
+            "action": "scroll",
+            "direction": "down",
+            "reason": "Nothing actionable in view and the page indicates more content below.",
+        }
 
     total_inputs = len(inputs)
     sensitive = graph.get("sensitiveItemsCount", 0)
@@ -414,8 +550,8 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
             "reply": "Hi! I'm Aiva Nex Agent. I can scan this page, answer questions, or help you search/fill/summarize things - what would you like to do?",
             "action": "chat_reply",
             "suggested_actions": [
-                {"label": "🔍 Search on Google", "query": "open google search for "},
                 {"label": "📄 Summarize current page", "query": "summarize page"},
+                {"label": "📜 Scroll down", "query": "scroll down"},
             ],
         }
 
@@ -451,28 +587,18 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
             "url": wiki_url,
         }
 
-    # 2. Dynamic Product & E-Commerce Search (Amazon, Flipkart, eBay, Google, etc.)
-    if any(k in q for k in ["amazon", "flipkart", "ebay", "myntra", "meesho", "price for", "prices for", "best price", "search for"]):
-        platform = "amazon" if "amazon" in q else ("flipkart" if "flipkart" in q else ("ebay" if "ebay" in q else "google"))
+    # 2. Generic web search ("search for X", "price for X"). No site is
+    # hardcoded here: the side panel's intent parser (extension/intent.js)
+    # handles "search X in <site>" on-device before /chat is ever called.
+    if any(k in q for k in ["price for", "prices for", "best price", "search for"]):
         clean_query = q
-        for rm in ["best prices for", "best price for", "best prices of", "best price of", "prices for", "price for", "in amazon", "on amazon", "in flipkart", "on flipkart", "in ebay", "on ebay", "search for", "find"]:
+        for rm in ["best prices for", "best price for", "best prices of", "best price of", "prices for", "price for", "search for"]:
             clean_query = clean_query.replace(rm, "")
         clean_query = clean_query.strip() or query.strip()
-
-        if platform == "amazon":
-            url = f"https://www.amazon.in/s?k={urllib.parse.quote(clean_query)}"
-        elif platform == "flipkart":
-            url = f"https://www.flipkart.com/search?q={urllib.parse.quote(clean_query)}"
-        elif platform == "ebay":
-            url = f"https://www.ebay.com/sch/i.html?_nkw={urllib.parse.quote(clean_query)}"
-        else:
-            url = f"https://www.google.com/search?q={urllib.parse.quote(clean_query)}"
-
         return {
-            "reply": f"Searching {platform.capitalize()} for '{clean_query}'...",
+            "reply": f"Searching Google for '{clean_query}'...",
             "action": "open_url",
-            "url": url,
-            "summary": f"Navigating to {platform.capitalize()} to view listings for '{clean_query}'.",
+            "url": f"https://www.google.com/search?q={urllib.parse.quote(clean_query)}",
             "suggested_actions": [
                 {"label": "📜 Scroll down results", "query": "scroll down"},
                 {"label": "📄 Summarize page", "query": "summarize page"},
@@ -518,7 +644,7 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
         }
 
     # 6. Page Summarize Intent (Uses Local LLM + Rich Page Text Snippets)
-    if "summarize" in q or "summary" in q:
+    if "summarize" in q or "summarise" in q or "summary" in q:
         llm_summary = call_local_llm_chat("Summarize the key information, titles, and search results on this page concisely.", graph_dict, model)
         if llm_summary:
             return {
@@ -551,19 +677,19 @@ def decide_chat_response(query: str, graph_dict: Dict[str, Any], model: Optional
             "reply": llm_reply,
             "action": "chat_reply",
             "suggested_actions": [
-                {"label": f"🔍 Search '{query[:20]}' on Google", "query": f"open google search for {query}"},
+                {"label": f"🔍 Search '{query[:20]}' on Google", "query": f"search {query}"},
                 {"label": "📄 Summarize current page", "query": "summarize page"}
             ]
         }
 
-    # Fallback: LLM unavailable - auto open Google search for the query
-    search_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+    # Fallback: LLM unavailable. Don't silently turn arbitrary chat text into
+    # a web search (that is how "summarize the page" used to end up on
+    # Google) - explain and offer explicit, deterministic commands instead.
     return {
-        "reply": f"Searching Google for '{query}'...",
-        "action": "open_url",
-        "url": search_url,
+        "reply": "No local model is available to answer that. Try a command: 'search <item>', 'search <item> on <site>', 'summarize this page', 'scroll down', 'click <label>' or 'fill form'.",
+        "action": "chat_reply",
         "suggested_actions": [
-            {"label": "📜 Scroll down", "query": "scroll down"},
+            {"label": f"🔍 Search '{query[:20]}' on Google", "query": f"search {query}"},
             {"label": "📄 Summarize page", "query": "summarize page"}
         ]
     }
