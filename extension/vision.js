@@ -146,7 +146,7 @@
   function afterAction(tabId, action) {
     if (!action || !action.bbox || tabId == null) return;
     const label = `${action.action}${action.visualText ? ": " + action.visualText : ""} (${action.targetVisualId || ""})`;
-    chrome.tabs.sendMessage(tabId, { type: "VISION_HIGHLIGHT", bbox: action.bbox, label }, () => void chrome.runtime.lastError);
+    chrome.tabs.sendMessage(tabId, { type: "VISION_HIGHLIGHT", bbox: action.bbox, label, ref: action.targetRef || null }, () => void chrome.runtime.lastError);
   }
 
   function handlesAction(action) {

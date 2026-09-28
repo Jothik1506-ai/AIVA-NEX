@@ -7,6 +7,7 @@
   const $ = (id) => document.getElementById(id);
   const section = $("settingsSection");
   const tokenInput = $("serverTokenInput");
+  const urlInput = $("serverUrlInput");
   const optIn = $("feedbackOptIn");
   const status = $("settingsStatusLine");
 
@@ -16,8 +17,9 @@
   }
 
   function load() {
-    chrome.storage.local.get(["aivaServerToken", "aivaFeedbackOptIn"], (s) => {
+    chrome.storage.local.get(["aivaServerToken", "aivaFeedbackOptIn", "aivaServerUrl"], (s) => {
       tokenInput.value = s.aivaServerToken || "";
+      urlInput.value = s.aivaServerUrl || AivaServerUrl.DEFAULT_SERVER_URL;
       optIn.checked = s.aivaFeedbackOptIn === true;
       if (!s.aivaServerToken) setStatus("No server token set yet - paste it from the server console.", "error");
     });
@@ -36,8 +38,16 @@
 
   $("saveSettingsBtn").addEventListener("click", () => {
     const token = tokenInput.value.trim();
-    chrome.storage.local.set({ aivaServerToken: token, aivaFeedbackOptIn: optIn.checked }, () => {
-      setStatus("Saved. Testing connection…");
+    const v = AivaServerUrl.validateServerUrl(urlInput.value);
+    if (!v.ok) return setStatus(v.error, "error");
+    urlInput.value = v.url;
+    chrome.storage.local.set({ aivaServerToken: token, aivaFeedbackOptIn: optIn.checked, aivaServerUrl: v.url }, () => {
+      setStatus(
+        AivaServerUrl.isLocalhost(v.url)
+          ? "Saved. Testing connection…"
+          : "Saved. Testing connection… (non-local server: page context and the token leave this machine" +
+              (v.url.startsWith("http:") ? ", unencrypted over http" : "") + ")"
+      );
       chrome.runtime.sendMessage({ type: "CHECK_AUTH" }, (res) => {
         if (chrome.runtime.lastError || !res) return setStatus("Could not reach the background worker.", "error");
         if (res.ok) return setStatus("Connected - token accepted by the local server.", "ok");

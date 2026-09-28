@@ -632,3 +632,21 @@ body {
   font-size: 12px;
 }
 
+
+/* ---- Blurred backdrop behind open panels (profile / feedback / settings).
+   Esc or a click on the backdrop closes the panel; typed input is kept
+   (the section is only hidden). ---- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 20;
+}
+
+.feedback-panel {
+  position: relative;
+  z-index: 21;
+}

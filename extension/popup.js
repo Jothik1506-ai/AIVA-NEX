@@ -345,33 +345,143 @@ function runExecute() {
 // ---------------------------------------------------------------------
 // Interactive Chat Agent Section
 // ---------------------------------------------------------------------
+// On-device tokenisation of chat text with the same detectors the page scan
+// uses (pii-checks.js + ner-rules.js). One counter set per request keeps
+// tokens unique across the message and the history sent with it.
+function tokeniseChatText(text, counters) {
+  if (!window.AivaPII || !text) return { text: text || "", found: {} };
+  const { redactedText, categoriesFound } = AivaPII.redactAllPII(String(text), counters);
+  return { text: redactedText, found: categoriesFound || {} };
+}
+
+function describeFound(found) {
+  return Object.keys(found)
+    .map((k) => `${k} x${found[k]}`)
+    .join(", ");
+}
+
+// Deterministic local intents (intent.js) - handled before any server/LLM.
+// Returns true when the query was fully handled here.
+function handleLocalIntent(query) {
+  if (!window.AivaIntent) return false;
+  const intent = AivaIntent.parseIntent(query);
+
+  if (intent.type === "search") {
+    // Never send personal data to a search engine either.
+    const pii = tokeniseChatText(intent.query, {});
+    if (Object.keys(pii.found).length) {
+      addCard(
+        `⚠️ Not searching: your query looks like it contains personal data (${escapeHtml(describeFound(pii.found))}). Remove it and try again.`,
+        "chat-msg-agent"
+      );
+      setStatus("Search blocked: personal data in query.", "error");
+      return true;
+    }
+    if (!AivaIntent.isSafeUrl(intent.url)) return true;
+    const where = intent.site || "Google";
+    addCard(`Searching ${escapeHtml(where)} for '${escapeHtml(intent.query)}'…`, "chat-msg-agent");
+    chrome.runtime.sendMessage({ type: "NAVIGATE_TAB", url: intent.url }, () => void chrome.runtime.lastError);
+    // The page is about to change - the old scan no longer applies.
+    lastGraph = null;
+    flowStep = "scan";
+    updatePrimaryButton();
+    setStatus("Ready", "ok");
+    return true;
+  }
+
+  if (intent.type === "scroll") {
+    getActiveTab((tab) => {
+      chrome.tabs.sendMessage(tab.id, { type: "EXECUTE_ACTION", action: { action: "scroll", direction: intent.direction } }, (res) => {
+        if (chrome.runtime.lastError || !res) return setStatus("Could not scroll this page.", "error");
+        setStatus(res.ok ? res.message : res.error, res.ok ? "ok" : "error");
+      });
+    });
+    return true;
+  }
+
+  if (intent.type === "fill_form") {
+    getActiveTab((tab) =>
+      renderChatAgentResponse(
+        {
+          reply: "I can autofill your details from your on-device profile. Your PII is never sent to the server.",
+          action: "request_autofill_permission",
+        },
+        tab.id
+      )
+    );
+    setStatus("Ready", "ok");
+    return true;
+  }
+
+  if (intent.type === "click") {
+    const doClick = (graph, tabId) => {
+      const ref = AivaIntent.findTargetRef(graph, intent.label);
+      if (!ref) {
+        addCard(`Couldn't find anything labelled '${escapeHtml(intent.label)}' on this page.`, "chat-msg-agent");
+        setStatus("Ready", "ok");
+        return;
+      }
+      chrome.tabs.sendMessage(tabId, { type: "EXECUTE_ACTION", action: { action: "click", targetRef: ref } }, (res) => {
+        if (chrome.runtime.lastError || !res) return setStatus("Could not click on this page.", "error");
+        addCard(res.ok ? `Clicked '${escapeHtml(intent.label)}'.` : `⚠️ ${escapeHtml(res.error || "Click failed.")}`, "chat-msg-agent");
+        setStatus(res.ok ? res.message : res.error, res.ok ? "ok" : "error");
+      });
+    };
+    // Always re-scan first: refs are only valid for the page as it is now.
+    getActiveTab((tab) => runScan((graph) => (graph ? doClick(graph, tab.id) : null)));
+    return true;
+  }
+
+  return false; // "summarize" and "chat" continue to the server path
+}
+
 function handleSendChat(queryText) {
   const query = (queryText || el.chatInput.value).trim();
   if (!query) return;
 
   el.chatInput.value = "";
   addCard(escapeHtml(query), "chat-msg-user");
+
+  if (handleLocalIntent(query)) return;
+
+  // "summarize the page" (and close variants) always runs the page-summary
+  // action with a canonical message - never a web search.
+  const isSummary = !!(window.AivaIntent && AivaIntent.parseIntent(query).type === "summarize");
+  const serverQuery = isSummary ? "summarize page" : query;
   setStatus("Aiva Nex Agent thinking…");
 
   const sendQueryWithGraph = (graph, boundTabId) => {
     const model = el.modelSelect.value;
+    const counters = {};
+    const safeMsg = tokeniseChatText(serverQuery, counters);
+    const safeHistory = chatHistory.map((h) => ({ role: h.role, content: tokeniseChatText(h.content, counters).text }));
+    if (Object.keys(safeMsg.found).length) {
+      setStatus(`Personal data tokenised on-device before sending (${describeFound(safeMsg.found)}).`);
+    }
     chrome.runtime.sendMessage(
       {
         type: "CHAT_WITH_SERVER",
-        message: query,
+        message: safeMsg.text,
         graph: graph || {},
         model: model,
-        history: chatHistory,
+        history: safeHistory,
       },
       (res) => {
-        if (chrome.runtime.lastError || !res || !res.ok) {
+        if (chrome.runtime.lastError || !res || (!res.ok && res.network)) {
           setStatus("Error communicating with chat server.", "error");
-          addCard("Sorry, I could not reach the server. Is main.py running on localhost:8000?", "chat-msg-agent");
+          addCard("Sorry, I could not reach the server. Is main.py running? (Server URL is in ⚙ Settings.)", "chat-msg-agent");
+          return;
+        }
+        if (!res.ok) {
+          // A real server answer (e.g. 400 PII rejection, 401 token) - show it.
+          setStatus(res.error || "Server rejected the request.", "error");
+          addCard(`⚠️ Server said: ${escapeHtml(res.error || "request rejected")}`, "chat-msg-agent");
           return;
         }
 
         const data = res.data || {};
-        chatHistory.push({ role: "user", content: query });
+        // Only tokenised text is kept, so history never holds raw PII.
+        chatHistory.push({ role: "user", content: safeMsg.text });
         chatHistory.push({ role: "assistant", content: data.reply });
 
         renderChatAgentResponse(data, boundTabId);
@@ -401,11 +511,7 @@ async function renderChatAgentResponse(data, boundTabId) {
   }
 
   // 1. Search & Browse / Navigation Action
-  if (data.action === "search_summary" || data.action === "open_url") {
-    if (data.url) {
-      chrome.runtime.sendMessage({ type: "NAVIGATE_TAB", url: data.url });
-    }
-  }
+  // (Navigation for open_url / search_summary is handled once, in step 5.)
 
   // 2. Request Autofill Permission Card
   if (data.action === "request_autofill_permission") {
@@ -477,10 +583,10 @@ async function renderChatAgentResponse(data, boundTabId) {
       <div class="permission-card" style="border-color:#22c55e;">
         <div style="font-size:11px; color:#4ade80; font-weight:600;">🛍️ FINAL ORDER CONFIRMATION</div>
         <div class="order-summary-box">
-          <div><strong>Item:</strong> ${escapeHtml(summary.item || "Apple iPhone 17 (128GB)")}</div>
-          <div><strong>Price:</strong> ${escapeHtml(summary.price || "₹74,999")}</div>
+          <div><strong>Item:</strong> ${escapeHtml(summary.item || "(see page)")}</div>
+          <div><strong>Price:</strong> ${escapeHtml(summary.price || "(see page)")}</div>
           <div><strong>Address:</strong> ${escapeHtml(savedAddress || "(no address saved locally)")}</div>
-          <div><strong>Delivery:</strong> ${escapeHtml(summary.delivery || "Express Delivery (2-3 days)")}</div>
+          <div><strong>Delivery:</strong> ${escapeHtml(summary.delivery || "(see page)")}</div>
         </div>
         <div class="permission-actions">
           <button class="btn-action-confirm" id="${orderCardId}-confirm" style="background:#16a34a;">🛒 Confirm & Place Order</button>
@@ -530,8 +636,10 @@ async function renderChatAgentResponse(data, boundTabId) {
   }
 
   // 5. Open URL Navigation Action
-  if ((data.action === "open_url" || data.url) && data.url) {
-    chrome.runtime.sendMessage({ type: "NAVIGATE_TAB", url: data.url });
+  if ((data.action === "open_url" || data.action === "search_summary") && data.url) {
+    if (window.AivaIntent && AivaIntent.isSafeUrl(data.url)) {
+      chrome.runtime.sendMessage({ type: "NAVIGATE_TAB", url: data.url }, () => void chrome.runtime.lastError);
+    }
   }
 
   // 6. Interactive Suggested Action Buttons
@@ -777,7 +885,31 @@ checkServer();
 loadModels();
 loadLocalProfile();
 updatePrimaryButton();
-getActiveTab(() => {});
+// Scan the current page as soon as the panel opens. This only talks to the
+// content script (on-device detection/tokenisation) - it makes NO server
+// call; sending context stays a deliberate click.
+getActiveTab(() => runScan());
+
+// ---------------------------------------------------------------------
+// Blurred backdrop behind the profile / feedback / settings panels. Esc or
+// a click on the backdrop closes the panel (safe: the panel is only hidden,
+// anything typed into it is kept).
+// ---------------------------------------------------------------------
+(() => {
+  const backdrop = document.getElementById("modalBackdrop");
+  const panels = ["profileSection", "feedbackSection", "settingsSection"]
+    .map((id) => document.getElementById(id))
+    .filter(Boolean);
+  if (!backdrop) return;
+  const sync = () => backdrop.classList.toggle("hidden", !panels.some((p) => !p.classList.contains("hidden")));
+  const closeAll = () => panels.forEach((p) => p.classList.add("hidden"));
+  panels.forEach((p) => new MutationObserver(sync).observe(p, { attributes: true, attributeFilter: ["class"] }));
+  backdrop.addEventListener("click", closeAll);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !backdrop.classList.contains("hidden")) closeAll();
+  });
+  sync();
+})();
 
 // ---------------------------------------------------------------------
 // Feedback Logic

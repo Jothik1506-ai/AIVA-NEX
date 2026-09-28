@@ -24,7 +24,7 @@
   <main class="log" id="log">
     <div class="log-empty" id="logEmpty">
       <span class="log-empty-icon">✳</span>
-      <p>Ask Aiva Nex Agent anything — search Flipkart deals, scroll pages, summarize content, or fill forms locally without sending your PII.</p>
+      <p>Ask Aiva Nex Agent anything — search the web or a specific site, scroll pages, summarize content, or fill forms locally without sending your PII.</p>
     </div>
   </main>
 
@@ -81,6 +81,10 @@
   <section class="feedback-panel hidden" id="settingsSection">
     <div class="section-label">⚙ Settings</div>
     <div class="field">
+      <label for="serverUrlInput">Server URL (default http://127.0.0.1:8000)</label>
+      <input type="url" id="serverUrlInput" placeholder="http://127.0.0.1:8000" autocomplete="off" />
+    </div>
+    <div class="field">
       <label for="serverTokenInput">Server token (printed by <code>python main.py</code>, stored in server/.aiva_token)</label>
       <input type="password" id="serverTokenInput" placeholder="Paste the server token" autocomplete="off" />
     </div>
@@ -91,15 +95,14 @@
 
   <footer class="dock">
     <div class="quick-chips" id="promptChips">
-      <button type="button" class="chip-btn" data-query="best prices for rtx 5060 in amazon">🔍 Search Amazon</button>
-      <button type="button" class="chip-btn" data-query="autofill form">🛒 Buy / Fill Form</button>
+      <button type="button" class="chip-btn" data-query="fill form">📝 Fill Form</button>
       <button type="button" class="chip-btn" data-query="scroll down">📜 Scroll</button>
-      <button type="button" class="chip-btn" data-query="summarize page">📄 Summary</button>
+      <button type="button" class="chip-btn" data-query="summarize this page">📄 Summary</button>
     </div>
 
     <div class="composer" id="composer">
       <div class="chat-input-wrapper">
-        <input type="text" id="chatInput" placeholder="Type a query (e.g. best prices for RTX 5060 in Amazon, summarize page)..." autocomplete="off" />
+        <input type="text" id="chatInput" placeholder="Ask anything, e.g. search wireless earbuds, or summarize this page" autocomplete="off" />
         <button id="sendChatBtn" class="send-btn" title="Send query" type="button">➤</button>
       </div>
 
@@ -120,7 +123,13 @@
     <div class="dock-footnote">No raw PII ever leaves your browser. Only sanitized context is sent.</div>
   </footer>
 
+  <div class="modal-backdrop hidden" id="modalBackdrop"></div>
+
   <script src="memory.js"></script>
+  <script src="pii-checks.js"></script>
+  <script src="ner-rules.js"></script>
+  <script src="intent.js"></script>
+  <script src="server-url.js"></script>
   <script src="popup.js"></script>
   <script src="settings.js"></script>
   <script src="vision.js"></script><!-- Visual perception (SIH26171) -->

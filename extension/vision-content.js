@@ -54,13 +54,36 @@
     };
   }
 
+  // The highlight is position:fixed, so it must follow its element when the
+  // page scrolls or reflows: with a DOM ref it is re-placed on the element's
+  // live rect; a visual-only target (no ref) can't be tracked, so it is
+  // removed on the first scroll/resize instead of pointing at the wrong spot.
+  let trackedRef = null;
+
+  function placeBox(box, x, y, w, h) {
+    Object.assign(box.style, { left: x - 4 + "px", top: y - 4 + "px", width: w + 8 + "px", height: h + 8 + "px" });
+  }
+
+  function onViewportChange() {
+    const box = document.querySelector("." + HIGHLIGHT_CLASS);
+    if (!box) return;
+    const el = trackedRef && document.querySelector(`[${REF_ATTR}="${CSS.escape(trackedRef)}"]`);
+    if (!el) return clearHighlights();
+    const r = el.getBoundingClientRect();
+    placeBox(box, r.left, r.top, r.width, r.height);
+  }
+  window.addEventListener("scroll", onViewportChange, true);
+  window.addEventListener("resize", onViewportChange);
+
   function clearHighlights() {
+    trackedRef = null;
     document.querySelectorAll("." + HIGHLIGHT_CLASS).forEach((n) => n.remove());
   }
 
-  function highlight(bbox, label) {
+  function highlight(bbox, label, ref) {
     clearHighlights();
     if (!bbox) return;
+    trackedRef = ref || null;
     const [x, y, w, h] = bbox;
     const box = document.createElement("div");
     box.className = HIGHLIGHT_CLASS;
@@ -118,7 +141,7 @@
       return true;
     }
     if (msg.type === "VISION_HIGHLIGHT") {
-      highlight(msg.bbox, msg.label);
+      highlight(msg.bbox, msg.label, msg.ref);
       sendResponse({ ok: true });
       return true;
     }

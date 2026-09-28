@@ -230,6 +230,12 @@
   // 5. Screen graph builder
   // ---------------------------------------------------------------------
 
+  function fieldHasValue(el, type) {
+    if (type === "checkbox" || type === "radio") return !!el.checked;
+    if (type === "file") return !!(el.files && el.files.length);
+    return String(el.value == null ? "" : el.value).trim() !== "";
+  }
+
   function collectFields(counters) {
     const els = Array.from(document.querySelectorAll("input, textarea, select"));
     const detectedTypes = {};
@@ -264,6 +270,9 @@
         required: !!el.required,
         isSensitive: result.isSensitive,
         sanitizedValue: result.safeValue,
+        // Boolean only (never the value or its length): lets the server tell
+        // an empty tokenised field (PASSWORD_FIELD, EMAIL_1) from a filled one.
+        hasValue: fieldHasValue(el, type),
         position: approxRect(el),
       });
     });
@@ -643,8 +652,9 @@
           document.querySelector("input[type='search']") ||
           document.querySelector("input[placeholder*='Search']");
 
+        if (!action.query) return { ok: false, error: "No search query given." };
         if (searchInput) {
-          searchInput.value = action.query || "Apple iPhone 17";
+          searchInput.value = action.query;
           searchInput.dispatchEvent(new Event("input", { bubbles: true }));
           searchInput.style.border = "2px solid #2563eb";
           searchInput.scrollIntoView({ behavior: "smooth", block: "center" });

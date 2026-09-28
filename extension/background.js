@@ -4,7 +4,9 @@
 // content itself. Kept separate from content.js/popup.js so the network
 // call isn't subject to any page's Content-Security-Policy.
 
-const SERVER_URL = "http://127.0.0.1:8000";
+// Server URL is a Settings field (chrome.storage.local.aivaServerUrl),
+// validated as http/https by server-url.js; defaults to the local server.
+importScripts("server-url.js");
 
 // Feedback goes to the AIVA Work Manager's public feedback inbox - the same
 // endpoint the AIVA Browser reports into. CORS is deliberately opened on
@@ -19,12 +21,19 @@ const FEEDBACK_URL = "https://manager.aivafreelancia.in/api/feedback";
 // feedback is sent only when the user ticked the opt-in in Settings.
 function getSettings() {
   return new Promise((resolve) =>
-    chrome.storage.local.get(["aivaServerToken", "aivaFeedbackOptIn"], (s) => resolve(s || {}))
+    chrome.storage.local.get(["aivaServerToken", "aivaFeedbackOptIn", "aivaServerUrl"], (s) => resolve(s || {}))
   );
+}
+
+async function getServerUrl() {
+  const { aivaServerUrl } = await getSettings();
+  const v = AivaServerUrl.validateServerUrl(aivaServerUrl);
+  return v.ok ? v.url : AivaServerUrl.DEFAULT_SERVER_URL;
 }
 
 async function serverFetch(path, options = {}) {
   const { aivaServerToken } = await getSettings();
+  const SERVER_URL = await getServerUrl();
   const headers = { ...(options.headers || {}) };
   if (aivaServerToken) headers["X-Aiva-Token"] = aivaServerToken;
   const res = await fetch(SERVER_URL + path, { ...options, headers });
@@ -81,7 +90,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // --- end visual perception ---
 
   if (msg.type === "PING_SERVER") {
-    fetch(SERVER_URL + "/health")
+    getServerUrl()
+      .then((base) => fetch(base + "/health"))
       .then((res) => res.json())
       .then((data) => sendResponse({ ok: true, data }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
@@ -110,16 +120,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then(async (res) => {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          sendResponse({ ok: false, error: data.detail || "Server rejected chat request." });
+          const detail = typeof data.detail === "string" ? data.detail : data.detail ? JSON.stringify(data.detail) : "";
+          sendResponse({ ok: false, status: res.status, error: detail || "Server rejected chat request (HTTP " + res.status + ")." });
         } else {
           sendResponse({ ok: true, data });
         }
       })
-      .catch((err) => sendResponse({ ok: false, error: err.status === 401 ? err.message : "Could not reach server: " + err.message }));
+      .catch((err) =>
+        sendResponse(
+          err.status === 401
+            ? { ok: false, status: 401, error: err.message }
+            : { ok: false, network: true, error: "Could not reach server: " + err.message }
+        )
+      );
     return true;
   }
 
   if (msg.type === "NAVIGATE_TAB") {
+    // Only http/https may be opened from chat (no javascript:, data:, file:).
+    let safe = false;
+    try { safe = ["http:", "https:"].includes(new URL(msg.url).protocol); } catch (e) {}
+    if (msg.url && !safe) {
+      sendResponse({ ok: false, error: "Refused to open a non-http(s) URL." });
+      return false;
+    }
     if (msg.url) {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs && tabs[0]) {
