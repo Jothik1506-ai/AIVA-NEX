@@ -1,0 +1,1716 @@
+{
+ "meta": {
+  "note": "Synthetic and self-labelled by the benchmark author. Not real user data.",
+  "seed": 26171,
+  "pii_types": [
+   "AADHAAR",
+   "PAN",
+   "CARD",
+   "PHONE",
+   "EMAIL",
+   "NAME",
+   "ADDRESS"
+  ],
+  "action_policy": "focus the first empty required field; else click the primary submit-like button; else scroll if the page says more content follows; else summarize. Password/CVV/PIN/OTP count as fields."
+ },
+ "pages": [
+  {
+   "id": "kyc-01",
+   "category": "kyc",
+   "title": "e-KYC Verification",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "heading",
+     "text": "Complete your e-KYC",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Full Name",
+     "inputType": "text",
+     "required": true,
+     "text": "Ravi Kumar Sharma",
+     "entities": [
+      {
+       "value": "Ravi Kumar Sharma",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Aadhaar Number",
+     "inputType": "text",
+     "required": true,
+     "text": "9999 4105 7058",
+     "entities": [
+      {
+       "value": "9999 4105 7058",
+       "type": "AADHAAR"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "PAN",
+     "inputType": "text",
+     "required": true,
+     "text": "ABCPS1234K",
+     "entities": [
+      {
+       "value": "ABCPS1234K",
+       "type": "PAN"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Mobile Number",
+     "inputType": "text",
+     "required": true,
+     "text": "98765 43210",
+     "entities": [
+      {
+       "value": "98765 43210",
+       "type": "PHONE"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Email",
+     "inputType": "text",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Verify",
+    "Cancel"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "Email"
+   }
+  },
+  {
+   "id": "kyc-02",
+   "category": "kyc",
+   "title": "Video KYC - Details",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Applicant: Smt. Lakshmi Devi, D/O Venkata Rao",
+     "entities": [
+      {
+       "value": "Lakshmi Devi",
+       "type": "NAME"
+      },
+      {
+       "value": "Venkata Rao",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "snippet",
+     "text": "Residential address: Flat 4B, Sai Residency, Ameerpet Road, Hyderabad, Telangana 500016",
+     "entities": [
+      {
+       "value": "Flat 4B, Sai Residency, Ameerpet Road, Hyderabad, Telangana 500016",
+       "type": "ADDRESS"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Aadhaar Number",
+     "inputType": "text",
+     "required": true,
+     "text": "7237 2429 6561",
+     "entities": [
+      {
+       "value": "7237 2429 6561",
+       "type": "AADHAAR"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "PAN Number",
+     "inputType": "text",
+     "required": true,
+     "text": "BNZPM2501F",
+     "entities": [
+      {
+       "value": "BNZPM2501F",
+       "type": "PAN"
+      }
+     ]
+    }
+   ],
+   "buttons": [
+    "Continue"
+   ],
+   "expected": {
+    "action": "click",
+    "target": "Continue"
+   }
+  },
+  {
+   "id": "kyc-03",
+   "category": "kyc",
+   "title": "Update KYC",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Name as per PAN",
+     "inputType": "text",
+     "required": true,
+     "text": "Priya Nair",
+     "entities": [
+      {
+       "value": "Priya Nair",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "PAN",
+     "inputType": "text",
+     "required": true,
+     "text": "AAACR5055K",
+     "entities": [
+      {
+       "value": "AAACR5055K",
+       "type": "PAN"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Date of Birth",
+     "inputType": "date",
+     "required": true,
+     "text": "1990-01-01",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "OTP sent to your mobile",
+     "inputType": "text",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Submit"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "OTP sent to your mobile"
+   }
+  },
+  {
+   "id": "kyc-04",
+   "category": "kyc",
+   "title": "Aadhaar Seeding",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Enter the 12-digit Aadhaar printed on your card, e.g. XXXX XXXX 1234.",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Aadhaar",
+     "inputType": "text",
+     "required": true,
+     "text": "6933 7752 9506",
+     "entities": [
+      {
+       "value": "6933 7752 9506",
+       "type": "AADHAAR"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Confirm Aadhaar",
+     "inputType": "text",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Proceed"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "Confirm Aadhaar"
+   }
+  },
+  {
+   "id": "kyc-05",
+   "category": "kyc",
+   "title": "KYC Status",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "KYC reference 204653033083 has been approved.",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Your Aadhaar ending in 7058 is linked.",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Contact support at kyc.help@example.com for queries.",
+     "entities": [
+      {
+       "value": "kyc.help@example.com",
+       "type": "EMAIL"
+      }
+     ]
+    }
+   ],
+   "buttons": [
+    "Download acknowledgement"
+   ],
+   "expected": {
+    "action": "summarize",
+    "target": null
+   }
+  },
+  {
+   "id": "bank-01",
+   "category": "bank",
+   "title": "Open Savings Account",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Applicant Name",
+     "inputType": "text",
+     "required": true,
+     "text": "Arjun Reddy",
+     "entities": [
+      {
+       "value": "Arjun Reddy",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Mobile",
+     "inputType": "text",
+     "required": true,
+     "text": "+91 91234 56789",
+     "entities": [
+      {
+       "value": "+91 91234 56789",
+       "type": "PHONE"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Email Address",
+     "inputType": "text",
+     "required": true,
+     "text": "arjun.reddy@example.in",
+     "entities": [
+      {
+       "value": "arjun.reddy@example.in",
+       "type": "EMAIL"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Communication Address",
+     "inputType": "text",
+     "required": true,
+     "text": "H.No 12-3-45, Gandhi Nagar, Hyderabad 500080",
+     "entities": [
+      {
+       "value": "H.No 12-3-45, Gandhi Nagar, Hyderabad 500080",
+       "type": "ADDRESS"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "PAN",
+     "inputType": "text",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Next",
+    "Save draft"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "PAN"
+   }
+  },
+  {
+   "id": "bank-02",
+   "category": "bank",
+   "title": "Fund Transfer",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Beneficiary: Meera Iyer",
+     "entities": [
+      {
+       "value": "Meera Iyer",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "snippet",
+     "text": "Transaction ID 4382329425012428 initiated for Rs. 25,000.",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Amount",
+     "inputType": "text",
+     "required": true,
+     "text": "25000",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Remarks",
+     "inputType": "text",
+     "required": false,
+     "text": "Rent for March",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Pay now",
+    "Back"
+   ],
+   "expected": {
+    "action": "click",
+    "target": "Pay now"
+   }
+  },
+  {
+   "id": "bank-03",
+   "category": "bank",
+   "title": "Net Banking Login",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Customer ID",
+     "inputType": "text",
+     "required": true,
+     "text": "",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Password",
+     "inputType": "password",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Login"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "Customer ID"
+   }
+  },
+  {
+   "id": "bank-04",
+   "category": "bank",
+   "title": "Account Statement",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "heading",
+     "text": "Statement for A/c XXXX4521",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "UPI/205374887388/Swiggy - Rs. 450.00",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "NEFT/354258756988/Salary credit - Rs. 85,000.00",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Account holder: Suresh Babu Pillai",
+     "entities": [
+      {
+       "value": "Suresh Babu Pillai",
+       "type": "NAME"
+      }
+     ]
+    }
+   ],
+   "buttons": [
+    "Download PDF"
+   ],
+   "expected": {
+    "action": "summarize",
+    "target": null
+   }
+  },
+  {
+   "id": "bank-05",
+   "category": "bank",
+   "title": "Add Beneficiary",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Beneficiary Name",
+     "inputType": "text",
+     "required": true,
+     "text": "Kavya Menon",
+     "entities": [
+      {
+       "value": "Kavya Menon",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Account Number",
+     "inputType": "text",
+     "required": true,
+     "text": "50100123456789",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "IFSC",
+     "inputType": "text",
+     "required": true,
+     "text": "HDFC0001234",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Beneficiary mobile",
+     "inputType": "text",
+     "required": true,
+     "text": "87654 32109",
+     "entities": [
+      {
+       "value": "87654 32109",
+       "type": "PHONE"
+      }
+     ]
+    }
+   ],
+   "buttons": [
+    "Add beneficiary"
+   ],
+   "expected": {
+    "action": "click",
+    "target": "Add beneficiary"
+   }
+  },
+  {
+   "id": "bank-06",
+   "category": "bank",
+   "title": "Debit Card Services",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Your card 4111 1111 1111 1111 is active.",
+     "entities": [
+      {
+       "value": "4111 1111 1111 1111",
+       "type": "CARD"
+      }
+     ]
+    },
+    {
+     "kind": "snippet",
+     "text": "Card 4590 1611 0241 2490 could not be verified.",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Set new PIN",
+     "inputType": "password",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Confirm"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "Set new PIN"
+   }
+  },
+  {
+   "id": "rail-01",
+   "category": "railway",
+   "title": "Book Ticket - Passenger Details",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Train 12627 KARNATAKA EXP | SBC to NDLS | 14-Oct",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Passenger Name",
+     "inputType": "text",
+     "required": true,
+     "text": "Anil Kumar",
+     "entities": [
+      {
+       "value": "Anil Kumar",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Age",
+     "inputType": "text",
+     "required": true,
+     "text": "45",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Mobile Number",
+     "inputType": "text",
+     "required": true,
+     "text": "99887 76655",
+     "entities": [
+      {
+       "value": "99887 76655",
+       "type": "PHONE"
+      }
+     ]
+    }
+   ],
+   "buttons": [
+    "Continue"
+   ],
+   "expected": {
+    "action": "click",
+    "target": "Continue"
+   }
+  },
+  {
+   "id": "rail-02",
+   "category": "railway",
+   "title": "PNR Status",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "PNR 8524613790: CNF / B2 / 34",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Booked by: Deepak Chaturvedi",
+     "entities": [
+      {
+       "value": "Deepak Chaturvedi",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "snippet",
+     "text": "Train 22691 departs 20:00 from platform 5.",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Refresh"
+   ],
+   "expected": {
+    "action": "summarize",
+    "target": null
+   }
+  },
+  {
+   "id": "rail-03",
+   "category": "railway",
+   "title": "IRCTC Login",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Username",
+     "inputType": "text",
+     "required": true,
+     "text": "",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Password",
+     "inputType": "password",
+     "required": true,
+     "text": "",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Enter the captcha shown below.",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Sign in"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "Username"
+   }
+  },
+  {
+   "id": "rail-04",
+   "category": "railway",
+   "title": "Booking Confirmation",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Transaction 919442736094 successful. Amount Rs 1,245.00",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Ticket sent to anil.k@example.org",
+     "entities": [
+      {
+       "value": "anil.k@example.org",
+       "type": "EMAIL"
+      }
+     ]
+    },
+    {
+     "kind": "snippet",
+     "text": "Passenger 1: Anil Kumar, 45, M",
+     "entities": [
+      {
+       "value": "Anil Kumar",
+       "type": "NAME"
+      }
+     ]
+    }
+   ],
+   "buttons": [
+    "Print ticket"
+   ],
+   "expected": {
+    "action": "summarize",
+    "target": null
+   }
+  },
+  {
+   "id": "rail-05",
+   "category": "railway",
+   "title": "Tatkal Booking - Payment",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Card number",
+     "inputType": "text",
+     "required": true,
+     "text": "5555 5555 5555 4444",
+     "entities": [
+      {
+       "value": "5555 5555 5555 4444",
+       "type": "CARD"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Name on card",
+     "inputType": "text",
+     "required": true,
+     "text": "Rohan Gupta",
+     "entities": [
+      {
+       "value": "Rohan Gupta",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "CVV",
+     "inputType": "password",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Pay"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "CVV"
+   }
+  },
+  {
+   "id": "job-01",
+   "category": "job",
+   "title": "Apply - Software Engineer",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Full name",
+     "inputType": "text",
+     "required": true,
+     "text": "Sneha Kulkarni",
+     "entities": [
+      {
+       "value": "Sneha Kulkarni",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Email",
+     "inputType": "text",
+     "required": true,
+     "text": "sneha.k@example.com",
+     "entities": [
+      {
+       "value": "sneha.k@example.com",
+       "type": "EMAIL"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Phone",
+     "inputType": "text",
+     "required": true,
+     "text": "70123 45678",
+     "entities": [
+      {
+       "value": "70123 45678",
+       "type": "PHONE"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Current address",
+     "inputType": "text",
+     "required": true,
+     "text": "22, MG Road, Near City Mall, Pune, Maharashtra 411001",
+     "entities": [
+      {
+       "value": "22, MG Road, Near City Mall, Pune, Maharashtra 411001",
+       "type": "ADDRESS"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Resume link",
+     "inputType": "url",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Submit application"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "Resume link"
+   }
+  },
+  {
+   "id": "job-02",
+   "category": "job",
+   "title": "Candidate Profile",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Hi, I am Vikram Singh Rathore, a data engineer from Jaipur.",
+     "entities": [
+      {
+       "value": "Vikram Singh Rathore",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "snippet",
+     "text": "Reach me at +91 98111 22334 or vikram.r@example.net",
+     "entities": [
+      {
+       "value": "+91 98111 22334",
+       "type": "PHONE"
+      },
+      {
+       "value": "vikram.r@example.net",
+       "type": "EMAIL"
+      }
+     ]
+    },
+    {
+     "kind": "snippet",
+     "text": "Experience: 6 years in Spark, Kafka and Airflow.",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Edit profile"
+   ],
+   "expected": {
+    "action": "summarize",
+    "target": null
+   }
+  },
+  {
+   "id": "job-03",
+   "category": "job",
+   "title": "Government Job Portal - Registration",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Candidate Name",
+     "inputType": "text",
+     "required": true,
+     "text": "Pooja Yadav",
+     "entities": [
+      {
+       "value": "Pooja Yadav",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Father's Name",
+     "inputType": "text",
+     "required": true,
+     "text": "Ramesh Yadav",
+     "entities": [
+      {
+       "value": "Ramesh Yadav",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Aadhaar Number",
+     "inputType": "text",
+     "required": true,
+     "text": "8402 1649 5442",
+     "entities": [
+      {
+       "value": "8402 1649 5442",
+       "type": "AADHAAR"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Registration Number",
+     "inputType": "text",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Register"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "Registration Number"
+   }
+  },
+  {
+   "id": "job-04",
+   "category": "job",
+   "title": "Job Listings",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "heading",
+     "text": "2,431 jobs found for 'Python developer' in Bengaluru",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Senior Python Developer - 5-8 yrs - Rs 18-25 LPA",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Backend Engineer - Remote - Posted 2 days ago",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Showing 1-20 of 2,431 results. Scroll to load more.",
+     "entities": []
+    }
+   ],
+   "buttons": [],
+   "expected": {
+    "action": "scroll",
+    "target": null
+   }
+  },
+  {
+   "id": "login-01",
+   "category": "login",
+   "title": "Sign in",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Email",
+     "inputType": "text",
+     "required": true,
+     "text": "user.test@example.com",
+     "entities": [
+      {
+       "value": "user.test@example.com",
+       "type": "EMAIL"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Password",
+     "inputType": "password",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Sign in",
+    "Forgot password?"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "Password"
+   }
+  },
+  {
+   "id": "login-02",
+   "category": "login",
+   "title": "Login with OTP",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Mobile number",
+     "inputType": "text",
+     "required": true,
+     "text": "90000 12345",
+     "entities": [
+      {
+       "value": "90000 12345",
+       "type": "PHONE"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Enter OTP",
+     "inputType": "text",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Verify OTP"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "Enter OTP"
+   }
+  },
+  {
+   "id": "login-03",
+   "category": "login",
+   "title": "DigiLocker Sign In",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Aadhaar / Mobile",
+     "inputType": "text",
+     "required": true,
+     "text": "9999 4105 7058",
+     "entities": [
+      {
+       "value": "9999 4105 7058",
+       "type": "AADHAAR"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "6-digit Security PIN",
+     "inputType": "password",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Sign In"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "6-digit Security PIN"
+   }
+  },
+  {
+   "id": "login-04",
+   "category": "login",
+   "title": "Admin Console Login",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Username",
+     "inputType": "text",
+     "required": true,
+     "text": "admin",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Password",
+     "inputType": "password",
+     "required": true,
+     "text": "hunter2hunter2",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Log in"
+   ],
+   "expected": {
+    "action": "click",
+    "target": "Log in"
+   }
+  },
+  {
+   "id": "co-01",
+   "category": "checkout",
+   "title": "Checkout - Delivery",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Full name",
+     "inputType": "text",
+     "required": true,
+     "text": "Neha Joshi",
+     "entities": [
+      {
+       "value": "Neha Joshi",
+       "type": "NAME"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Address line 1",
+     "inputType": "text",
+     "required": true,
+     "text": "Flat 302, Green Park Apartments, Sector 21",
+     "entities": [
+      {
+       "value": "Flat 302, Green Park Apartments, Sector 21",
+       "type": "ADDRESS"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "City",
+     "inputType": "text",
+     "required": true,
+     "text": "Gurugram",
+     "entities": [
+      {
+       "value": "Gurugram",
+       "type": "ADDRESS"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Pincode",
+     "inputType": "text",
+     "required": true,
+     "text": "122016",
+     "entities": [
+      {
+       "value": "122016",
+       "type": "ADDRESS"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Phone",
+     "inputType": "text",
+     "required": true,
+     "text": "81234 56789",
+     "entities": [
+      {
+       "value": "81234 56789",
+       "type": "PHONE"
+      }
+     ]
+    }
+   ],
+   "buttons": [
+    "Continue to payment"
+   ],
+   "expected": {
+    "action": "click",
+    "target": "Continue to payment"
+   }
+  },
+  {
+   "id": "co-02",
+   "category": "checkout",
+   "title": "Payment",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Order total: Rs 3,499",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Card number",
+     "inputType": "text",
+     "required": true,
+     "text": "4012 8888 8888 1881",
+     "entities": [
+      {
+       "value": "4012 8888 8888 1881",
+       "type": "CARD"
+      }
+     ]
+    },
+    {
+     "kind": "input",
+     "label": "Expiry",
+     "inputType": "text",
+     "required": true,
+     "text": "12/29",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "CVV",
+     "inputType": "password",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Pay Rs 3,499"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "CVV"
+   }
+  },
+  {
+   "id": "co-03",
+   "category": "checkout",
+   "title": "Order Placed",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Order #886322959849 confirmed!",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Delivering to Neha Joshi, Flat 302, Green Park Apartments, Sector 21, Gurugram 122016",
+     "entities": [
+      {
+       "value": "Neha Joshi",
+       "type": "NAME"
+      },
+      {
+       "value": "Flat 302, Green Park Apartments, Sector 21, Gurugram 122016",
+       "type": "ADDRESS"
+      }
+     ]
+    },
+    {
+     "kind": "snippet",
+     "text": "Expected delivery: Thursday",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Track order",
+    "Continue shopping"
+   ],
+   "expected": {
+    "action": "summarize",
+    "target": null
+   }
+  },
+  {
+   "id": "co-04",
+   "category": "checkout",
+   "title": "Saved Cards",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Visa ending 1111 - 4212 3807 9975 5576",
+     "entities": [
+      {
+       "value": "4212 3807 9975 5576",
+       "type": "CARD"
+      }
+     ]
+    },
+    {
+     "kind": "snippet",
+     "text": "Gift card code 1234 5678 9012 3456 applied.",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Use this card"
+   ],
+   "expected": {
+    "action": "click",
+    "target": "Use this card"
+   }
+  },
+  {
+   "id": "co-05",
+   "category": "checkout",
+   "title": "Apply Coupon",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Coupon code",
+     "inputType": "text",
+     "required": false,
+     "text": "",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Invalid Aadhaar-like number in note: 4096 6460 3548",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Place order"
+   ],
+   "expected": {
+    "action": "click",
+    "target": "Place order"
+   }
+  },
+  {
+   "id": "co-06",
+   "category": "checkout",
+   "title": "Guest Checkout",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "Email for order updates",
+     "inputType": "text",
+     "required": true,
+     "text": "",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Mobile",
+     "inputType": "text",
+     "required": true,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Continue"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "Email for order updates"
+   }
+  },
+  {
+   "id": "news-01",
+   "category": "distractor",
+   "title": "ISRO launches PSLV-C62",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "heading",
+     "text": "PSLV-C62 places 9 satellites in orbit",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "The launch from Sriharikota lifted off at 10:17 IST on schedule.",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "The mission carried payloads weighing 1,425 kg in total.",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Officials said the next launch window opens in November.",
+     "entities": []
+    }
+   ],
+   "buttons": [],
+   "expected": {
+    "action": "summarize",
+    "target": null
+   }
+  },
+  {
+   "id": "news-02",
+   "category": "distractor",
+   "title": "Cricket Live Score",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "IND 287/6 (50 ov) vs AUS 214/9 (46.2 ov)",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Match ID 202611140045 - Wankhede Stadium",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Next update in 30 seconds. Scroll for ball-by-ball commentary.",
+     "entities": []
+    }
+   ],
+   "buttons": [],
+   "expected": {
+    "action": "scroll",
+    "target": null
+   }
+  },
+  {
+   "id": "shop-01",
+   "category": "distractor",
+   "title": "Samsung Galaxy M14 5G",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Buy Samsung Galaxy M14 5G at best price. 6000 mAh battery.",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Model number SM-M146BZBGINS | EAN 8806095032104",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Price: Rs 13,499. EMI from Rs 654/month.",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Add to cart",
+    "Buy now"
+   ],
+   "expected": {
+    "action": "click",
+    "target": "Add to cart"
+   }
+  },
+  {
+   "id": "docs-01",
+   "category": "distractor",
+   "title": "Python Tutorial - Lists",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "heading",
+     "text": "Lists in Python",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "A list is an ordered, mutable collection. Use append() to add items.",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Example: nums = [1, 2, 3]; nums.append(4)",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Continue reading below for list comprehensions.",
+     "entities": []
+    }
+   ],
+   "buttons": [],
+   "expected": {
+    "action": "scroll",
+    "target": null
+   }
+  },
+  {
+   "id": "wiki-01",
+   "category": "distractor",
+   "title": "Hyderabad - Wikipedia",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Hyderabad is the capital of Telangana and has a population of about 10 million.",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "The Charminar was built in 1591.",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Coordinates: 17.3850 N, 78.4867 E",
+     "entities": []
+    }
+   ],
+   "buttons": [],
+   "expected": {
+    "action": "summarize",
+    "target": null
+   }
+  },
+  {
+   "id": "search-01",
+   "category": "distractor",
+   "title": "Search results - flights to Delhi",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Showing results for flights to Delhi on 14 Oct.",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "6E 2134 departs 06:05, arrives 08:25 - Rs 5,432",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "AI 0544 departs 09:40, arrives 12:05 - Rs 6,120",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Search",
+    "Filter"
+   ],
+   "expected": {
+    "action": "click",
+    "target": "Search"
+   }
+  },
+  {
+   "id": "stats-01",
+   "category": "distractor",
+   "title": "Census Data Table",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "District code 5421 0987 6543 - population 1,234,567",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "GDP 2025-26: Rs 3,24,00,000 crore",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Phone numbers are not listed on this page.",
+     "entities": []
+    }
+   ],
+   "buttons": [],
+   "expected": {
+    "action": "summarize",
+    "target": null
+   }
+  },
+  {
+   "id": "support-01",
+   "category": "distractor",
+   "title": "Help Centre",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Call our toll-free helpline 1800 180 1234 (not a mobile number).",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Ticket #7788990011 has been closed.",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Search help articles",
+     "inputType": "text",
+     "required": false,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Search"
+   ],
+   "expected": {
+    "action": "click",
+    "target": "Search"
+   }
+  },
+  {
+   "id": "form-01",
+   "category": "distractor",
+   "title": "Feedback Form",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "input",
+     "label": "How was your experience?",
+     "inputType": "text",
+     "required": true,
+     "text": "",
+     "entities": []
+    },
+    {
+     "kind": "input",
+     "label": "Comments",
+     "inputType": "textarea",
+     "required": false,
+     "text": "",
+     "entities": []
+    }
+   ],
+   "buttons": [
+    "Submit feedback"
+   ],
+   "expected": {
+    "action": "focus",
+    "target": "How was your experience?"
+   }
+  },
+  {
+   "id": "blog-01",
+   "category": "distractor",
+   "title": "Monsoon Recipes",
+   "url": "https://example.test/",
+   "items": [
+    {
+     "kind": "snippet",
+     "text": "Try this quick pakora recipe for rainy evenings.",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Ingredients: 2 cups besan, 1 onion, salt, chilli powder.",
+     "entities": []
+    },
+    {
+     "kind": "snippet",
+     "text": "Serves 4. Preparation time 20 minutes.",
+     "entities": []
+    }
+   ],
+   "buttons": [],
+   "expected": {
+    "action": "summarize",
+    "target": null
+   }
+  }
+ ]
+}
